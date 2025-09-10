@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from beanie import PydanticObjectId
 from typing import List
+from app.services.gameplay_service import process_player_action
 
 from .models import (
     User, UserOut,
@@ -152,7 +153,7 @@ async def get_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
 async def campaign_action(
     campaign_id: PydanticObjectId,
     action: str,
-    current_user: User = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     campaign = await Campaign.get(campaign_id)
     if not campaign or not campaign.is_active:
@@ -162,72 +163,12 @@ async def campaign_action(
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
-    # Get current level
-    if campaign.current_level > len(campaign.levels):
-        raise HTTPException(status_code=400, detail="No active level")
-    level_id = campaign.levels[campaign.current_level - 1]
-    level = await Level.get(level_id)
-    if not level:
-        raise HTTPException(status_code=404, detail="Level not found")
+    try:
+        result = await process_player_action(campaign, action)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    # --- Case 1: Player advances to next level ---
-    if action.lower() in ["advance", "next level"]:
-        if not level.is_completed:
-            raise HTTPException(
-                status_code=400, detail="Enemy not defeated yet")
-
-        # TODO: Replace with LLM-generated enemy
-        new_enemy = {
-            "enemy_name": "Generated Orc",
-            "enemy_description": "A fierce orc blocks your path.",
-            "enemy_health": 50,
-        }
-
-        new_level = Level(
-            level_number=campaign.current_level + 1,
-            enemy_name=new_enemy["enemy_name"],
-            enemy_description=new_enemy["enemy_description"],
-            enemy_health=new_enemy["enemy_health"],
-        )
-        await new_level.insert()
-
-        campaign.levels.append(new_level.id)
-        campaign.current_level += 1
-        await campaign.save()
-
-        return {
-            "narrative": f"A new foe appears: {new_enemy['enemy_name']}!",
-            "level": new_level.level_number,
-            "enemy_health": new_level.enemy_health,
-        }
-
-    # --- Case 2: Normal player action ---
-    narrative = f"You performed: {action}"
-    damage = 10  # TODO: later connect with attributes or LLM
-    level.enemy_health -= damage
-
-    if level.enemy_health <= 0:
-        level.enemy_health = 0
-        level.is_completed = True
-        narrative += f" The {level.enemy_name} is defeated!"
-
-    turn = Turn(
-        turn_number=len(level.turns) + 1,
-        user_input=action,
-        narrative=narrative,
-        effects=[Effect(type=EffectType.DAMAGE, target="enemy", value=damage)],
-    )
-    await turn.insert()
-
-    level.turns.append(turn.id)
-    await level.save()
-
-    return {
-        "narrative": narrative,
-        "enemy_health": level.enemy_health,
-        "enemy_defeated": level.is_completed,
-        "turn_number": turn.turn_number,
-    }
+    return result
 
 
 @router.delete("/api/campanha/{campaign_id}")
