@@ -42,7 +42,7 @@ class Turn(Document):
 
 
 class TurnOut(BaseModel):
-    id: str
+    id: PydanticObjectId
     turn_number: int
     user_input: str
     narrative: str
@@ -66,7 +66,7 @@ class Campaign(Document):
 
 
 class CampaignOut(BaseModel):
-    id: str
+    id: PydanticObjectId
     campaign_name: str
     campaign_description: str
     is_active: bool
@@ -118,7 +118,7 @@ class User(Document):
 
 
 class UserOut(BaseModel):
-    id: str
+    id: PydanticObjectId
     name: str
     email: EmailStr
 

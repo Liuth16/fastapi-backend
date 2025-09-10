@@ -173,24 +173,32 @@ async def end_campaign(campaign_id: PydanticObjectId):
 # ---------------------- HISTORY ----------------------
 @router.get("/api/historico/{campaign_id}", response_model=List[TurnOut])
 async def get_history(campaign_id: PydanticObjectId):
-    campaign = await Campaign.get(campaign_id, fetch_links=True)
+    campaign = await Campaign.get(campaign_id, fetch_links=False)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+ # fetch turns manually
+    turns = []
+    for t in campaign.turns:
+        fetched = await t.fetch()
+        if fetched:
+            turns.append(TurnOut.model_validate(fetched))
 
-    turns = [await t.fetch() for t in campaign.turns]
-    return [TurnOut.model_validate(t) for t in turns]
+    return turns
 
 
 @router.delete("/api/historico/{campaign_id}")
 async def clear_history(campaign_id: PydanticObjectId):
-    campaign = await Campaign.get(campaign_id, fetch_links=True)
+    campaign = await Campaign.get(campaign_id, fetch_links=False)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # delete all linked turns
-    for turn in campaign.turns:
-        await turn.delete()
+  # fetch and delete all linked turns
+    for turn_link in campaign.turns:
+        fetched = await turn_link.fetch()
+        if fetched:
+            await fetched.delete()
 
+    # clear references
     campaign.turns = []
     await campaign.save()
     return {"message": "History cleared"}
