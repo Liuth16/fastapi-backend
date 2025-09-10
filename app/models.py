@@ -53,13 +53,39 @@ class TurnOut(BaseModel):
         from_attributes = True
 
 
+# ---------- LEVEL ----------
+class Level(Document):
+    level_number: int
+    enemy_name: str
+    enemy_description: str
+    enemy_health: int
+    is_completed: bool = False
+    turns: List[PydanticObjectId] = []
+
+    class Settings:
+        name = "levels"
+
+
+class LevelOut(BaseModel):
+    id: PydanticObjectId
+    level_number: int
+    enemy_name: str
+    enemy_description: str
+    enemy_health: int
+    is_completed: bool
+
+    class Config:
+        from_attributes = True
+
+
 # ---------- CAMPAIGN ----------
 class Campaign(Document):
     campaign_name: str
     campaign_description: str
     is_active: bool = True
-    character_id: PydanticObjectId    # ✅ store only the character id
-    turns: List[PydanticObjectId] = []  # ✅ store turn ids
+    character_id: PydanticObjectId
+    current_level: int = 1
+    levels: List[PydanticObjectId] = []  # references to Level docs
 
     class Settings:
         name = "campaigns"
@@ -70,6 +96,7 @@ class CampaignOut(BaseModel):
     campaign_name: str
     campaign_description: str
     is_active: bool
+    current_level: int
 
     class Config:
         from_attributes = True
@@ -84,9 +111,9 @@ class Character(Document):
     attributes: AttributeSet
     level: int = 1
     skill_points: int = 0
-    current_campaign_id: Optional[PydanticObjectId] = None  # ✅ reference only
-    past_campaign_ids: List[PydanticObjectId] = []          # ✅ references
-    user_id: PydanticObjectId                               # ✅ owner reference
+    current_campaign_id: Optional[PydanticObjectId] = None
+    past_campaign_ids: List[PydanticObjectId] = []
+    user_id: PydanticObjectId
 
     class Settings:
         name = "characters"
@@ -111,7 +138,7 @@ class User(Document):
     name: str
     email: EmailStr
     hashed_password: str
-    characters: List[PydanticObjectId] = []  # ✅ store character ids
+    characters: List[PydanticObjectId] = []
 
     class Settings:
         name = "users"

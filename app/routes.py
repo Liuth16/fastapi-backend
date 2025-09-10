@@ -7,7 +7,9 @@ from .models import (
     User, UserOut,
     Character, CharacterOut,
     Campaign, CampaignOut,
+    Level, LevelOut,
     Turn, TurnOut,
+    Effect, EffectType,
     AttributeSet
 )
 from .auth import hash_password, verify_password, create_access_token, get_current_user
@@ -97,13 +99,36 @@ async def create_campaign(
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Character not found")
 
+    # Create Campaign
     campaign = Campaign(
         campaign_name=name,
         campaign_description=description,
-        character_id=character.id
+        character_id=character.id,
+        current_level=1,
     )
     await campaign.insert()
 
+    # --- Create Level 1 automatically ---
+    # TODO: replace with LLM call to generate dynamic enemies
+    first_enemy = {
+        "enemy_name": "Goblin",
+        "enemy_description": "A small but vicious goblin blocks your path.",
+        "enemy_health": 30,
+    }
+
+    level1 = Level(
+        level_number=1,
+        enemy_name=first_enemy["enemy_name"],
+        enemy_description=first_enemy["enemy_description"],
+        enemy_health=first_enemy["enemy_health"],
+    )
+    await level1.insert()
+
+    # Attach level1 to campaign
+    campaign.levels.append(level1.id)
+    await campaign.save()
+
+    # Update character state
     character.current_campaign_id = campaign.id
     await character.save()
 
@@ -123,7 +148,7 @@ async def get_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
     return CampaignOut.model_validate(campaign)
 
 
-@router.post("/api/campanha/{campaign_id}/acao", response_model=TurnOut)
+@router.post("/api/campanha/{campaign_id}/acao")
 async def campaign_action(
     campaign_id: PydanticObjectId,
     action: str,
@@ -137,20 +162,72 @@ async def campaign_action(
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
+    # Get current level
+    if campaign.current_level > len(campaign.levels):
+        raise HTTPException(status_code=400, detail="No active level")
+    level_id = campaign.levels[campaign.current_level - 1]
+    level = await Level.get(level_id)
+    if not level:
+        raise HTTPException(status_code=404, detail="Level not found")
+
+    # --- Case 1: Player advances to next level ---
+    if action.lower() in ["advance", "next level"]:
+        if not level.is_completed:
+            raise HTTPException(
+                status_code=400, detail="Enemy not defeated yet")
+
+        # TODO: Replace with LLM-generated enemy
+        new_enemy = {
+            "enemy_name": "Generated Orc",
+            "enemy_description": "A fierce orc blocks your path.",
+            "enemy_health": 50,
+        }
+
+        new_level = Level(
+            level_number=campaign.current_level + 1,
+            enemy_name=new_enemy["enemy_name"],
+            enemy_description=new_enemy["enemy_description"],
+            enemy_health=new_enemy["enemy_health"],
+        )
+        await new_level.insert()
+
+        campaign.levels.append(new_level.id)
+        campaign.current_level += 1
+        await campaign.save()
+
+        return {
+            "narrative": f"A new foe appears: {new_enemy['enemy_name']}!",
+            "level": new_level.level_number,
+            "enemy_health": new_level.enemy_health,
+        }
+
+    # --- Case 2: Normal player action ---
     narrative = f"You performed: {action}"
+    damage = 10  # TODO: later connect with attributes or LLM
+    level.enemy_health -= damage
+
+    if level.enemy_health <= 0:
+        level.enemy_health = 0
+        level.is_completed = True
+        narrative += f" The {level.enemy_name} is defeated!"
 
     turn = Turn(
-        turn_number=len(campaign.turns) + 1,
+        turn_number=len(level.turns) + 1,
         user_input=action,
         narrative=narrative,
-        effects=[],
+        effects=[Effect(type=EffectType.DAMAGE, target="enemy", value=damage)],
     )
     await turn.insert()
 
-    campaign.turns.append(turn.id)
-    await campaign.save()
+    level.turns.append(turn.id)
+    await level.save()
 
-    return TurnOut.model_validate(turn)
+    return {
+        "narrative": narrative,
+        "enemy_health": level.enemy_health,
+        "enemy_defeated": level.is_completed,
+        "turn_number": turn.turn_number,
+    }
 
 
 @router.delete("/api/campanha/{campaign_id}")
@@ -174,8 +251,8 @@ async def end_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
 
 
 # ---------------------- HISTORY ----------------------
-@router.get("/api/historico/{campaign_id}", response_model=List[TurnOut])
-async def get_history(campaign_id: PydanticObjectId, current_user: User = Depends(get_current_user)):
+@router.get("/api/historico/{campaign_id}")
+async def get_history(campaign_id: PydanticObjectId, current_user: User = Depends(get_current_user)) -> dict:
     campaign = await Campaign.get(campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -184,9 +261,27 @@ async def get_history(campaign_id: PydanticObjectId, current_user: User = Depend
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
-    turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
+    history = []
+    for level_id in campaign.levels:
+        level = await Level.get(level_id)
+        if not level:
+            continue
 
-    return [TurnOut.model_validate(t) for t in turns]
+        turns = await Turn.find({"_id": {"$in": level.turns}}).to_list()
+        history.append({
+            "level_number": level.level_number,
+            "enemy_name": level.enemy_name,
+            "enemy_description": level.enemy_description,
+            "enemy_health": level.enemy_health,
+            "is_completed": level.is_completed,
+            "turns": [TurnOut.model_validate(t) for t in turns],
+        })
+
+    return {
+        "campaign_id": str(campaign.id),
+        "campaign_name": campaign.campaign_name,
+        "levels": history,
+    }
 
 
 @router.delete("/api/historico/{campaign_id}")
@@ -199,10 +294,15 @@ async def clear_history(campaign_id: PydanticObjectId, current_user: User = Depe
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
-    # delete all turns in this campaign
-    await Turn.find({"_id": {"$in": campaign.turns}}).delete()
+    # For each level in this campaign, delete its turns
+    for level_id in campaign.levels:
+        level = await Level.get(level_id)
+        if not level:
+            continue
 
-    campaign.turns = []
-    await campaign.save()
+        if level.turns:
+            await Turn.find({"_id": {"$in": level.turns}}).delete()
+            level.turns = []
+            await level.save()
 
     return {"message": "History cleared"}

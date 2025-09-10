@@ -6,6 +6,7 @@ from app.models import (
     Character,
     Campaign,
     Turn,
+    Level
 )
 from app.routes import router
 
@@ -18,4 +19,4 @@ async def app_init():
     client = motor.motor_asyncio.AsyncIOMotorClient(
         "mongodb://host.docker.internal:27017")
     db = client["rpg_db"]
-    await init_beanie(database=db, document_models=[User, Character, Campaign, Turn])
+    await init_beanie(database=db, document_models=[User, Character, Campaign, Turn, Level])
