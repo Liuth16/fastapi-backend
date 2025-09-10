@@ -1,15 +1,21 @@
 from fastapi import FastAPI
-from core.config import settings
 from beanie import init_beanie
-from pymongo import AsyncMongoClient
-from models.user_model import User
+import motor.motor_asyncio
+from app.models import (
+    User,
+    Character,
+    Campaign,
+    Turn,
+)
+from app.routes import router
 
-
-app = FastAPI(title=settings.PROJECT_NAME,
-              openapi_url=f"{settings.API_V1_STR}/openapi.json")
+app = FastAPI(title="Text RPG API")
+app.include_router(router)
 
 
 @app.on_event("startup")
-async def on_startup():
-    client = AsyncMongoClient(settings.MONGO_CONNECTION_STRING)
-    await init_beanie(database=client.rpg_game, document_models=[User])
+async def app_init():
+    client = motor.motor_asyncio.AsyncIOMotorClient(
+        "mongodb://host.docker.internal:27017")
+    db = client["rpg_db"]
+    await init_beanie(database=db, document_models=[User, Character, Campaign, Turn])
