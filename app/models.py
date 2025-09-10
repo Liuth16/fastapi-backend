@@ -1,5 +1,5 @@
 from typing import List, Optional
-from beanie import Document, Link
+from beanie import Document
 from pydantic import BaseModel, EmailStr
 from enum import Enum
 from datetime import datetime
@@ -58,8 +58,8 @@ class Campaign(Document):
     campaign_name: str
     campaign_description: str
     is_active: bool = True
-    character: Optional[Link["Character"]]  # reference to character
-    turns: List[Link[Turn]] = []
+    character_id: PydanticObjectId    # ✅ store only the character id
+    turns: List[PydanticObjectId] = []  # ✅ store turn ids
 
     class Settings:
         name = "campaigns"
@@ -84,9 +84,9 @@ class Character(Document):
     attributes: AttributeSet
     level: int = 1
     skill_points: int = 0
-    current_campaign: Optional[Link[Campaign]] = None
-    past_campaigns: List[Link[Campaign]] = []
-    user: Optional[Link["User"]] = None  # back-reference to owner
+    current_campaign_id: Optional[PydanticObjectId] = None  # ✅ reference only
+    past_campaign_ids: List[PydanticObjectId] = []          # ✅ references
+    user_id: PydanticObjectId                               # ✅ owner reference
 
     class Settings:
         name = "characters"
@@ -111,7 +111,7 @@ class User(Document):
     name: str
     email: EmailStr
     hashed_password: str
-    characters: List[Link[Character]] = []
+    characters: List[PydanticObjectId] = []  # ✅ store character ids
 
     class Settings:
         name = "users"
