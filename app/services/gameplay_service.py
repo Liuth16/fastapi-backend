@@ -1,5 +1,7 @@
 # app/services/gameplay_service.py
+import random
 from app.models import Campaign, Character, Level, Turn, Effect, EffectType
+from app.services.llm_service import generate_narrative_with_schema
 
 
 async def process_player_action(campaign: Campaign, action: str, character: Character):
@@ -15,25 +17,63 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
     if not level:
         raise ValueError("Level not found")
 
-    # --- Mock resolution logic (replace later with LLM integration) ---
-    narrative = f"You performed: {action}"
-    damage = 10  # Fixed damage for now
-    level.enemy_health = max(0, level.enemy_health - damage)
+    # Decide outcome randomly for now (50/50)
+    outcome_success = random.choice([True, False])
 
+    # Collect previous turn narratives for context
+    previous_turns = []
+    if level.turns:
+        turns = await Turn.find({"_id": {"$in": level.turns}}).to_list()
+        for t in turns:
+            previous_turns.append(
+                f"Player: {t.user_input} | Narrative: {t.narrative}")
+
+    print("Previous turns:", previous_turns)
+
+    # Call Gemini for structured narrative
+    llm_outcome = await generate_narrative_with_schema(
+        action=action,
+        outcome_success=outcome_success,
+        character_name=character.name,
+        enemy_name=level.enemy_name,
+        enemy_health=level.enemy_health,
+        level_number=level.level_number,
+        previous_turns=previous_turns,
+    )
+
+    print(llm_outcome)
+
+    # Apply health changes
+    level.enemy_health = max(0, level.enemy_health +
+                             llm_outcome.enemy_health_change)
+    character.current_health = max(
+        0, character.current_health + llm_outcome.character_health_change)
+
+    # Mark level complete if enemy died
     if level.enemy_health <= 0:
         level.is_completed = True
-        narrative += f" The {level.enemy_name} has been defeated!"
 
-    # (Optional) you could also apply damage to the character here if needed
-    # e.g. character.current_health = max(0, character.current_health - 3)
+    # Persist character and level
     await character.save()
+    await level.save()
 
-    # --- Create Turn with health snapshots ---
+    # Create Turn with health snapshots
     turn = Turn(
         turn_number=len(level.turns) + 1,
         user_input=action,
-        narrative=narrative,
-        effects=[Effect(type=EffectType.DAMAGE, target="enemy", value=damage)],
+        narrative=llm_outcome.narrative,
+        effects=[
+            Effect(
+                type=EffectType.DAMAGE if llm_outcome.enemy_health_change < 0 else EffectType.HEAL,
+                target="enemy",
+                value=abs(llm_outcome.enemy_health_change),
+            ),
+            Effect(
+                type=EffectType.DAMAGE if llm_outcome.character_health_change < 0 else EffectType.HEAL,
+                target="self",
+                value=abs(llm_outcome.character_health_change),
+            ),
+        ],
         character_health=character.current_health,
         enemy_health=level.enemy_health,
     )
@@ -43,9 +83,8 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
     level.turns.append(turn.id)
     await level.save()
 
-    # --- Return structured response ---
     return {
-        "narrative": narrative,
+        "narrative": llm_outcome.narrative,
         "enemy_health": level.enemy_health,
         "character_health": character.current_health,
         "enemy_defeated": level.is_completed,
