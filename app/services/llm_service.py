@@ -1,14 +1,13 @@
-# app/services/llm_service.py
-import os
 import json
 from typing import List
 from pydantic import BaseModel, Field
-from google import genai  # NEW SDK
+from google import genai
+from app.config import settings  # Use centralized config
 
-# Initialize the client once
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+# Initialize Gemini client using settings
+_client = genai.Client(api_key=settings.gemini_api_key)
 
-# Choose a fast model (you can swap to 2.5-pro for higher quality)
+# Choose the model (make it configurable if you want later)
 _MODEL = "gemini-2.5-flash"
 
 
@@ -37,31 +36,12 @@ Instructions:
 - Do not mention dice rolls, random numbers, or the word "success"/"failure" explicitly.
 - Update health deltas accordingly (negative means damage taken, positive means healing).
 - Return only JSON that matches the provided schema.
-
-Examples:
-SUCCESS example:
-{{
-  "narrative": "Your blade slips past the goblin's guard, scoring its shoulder. It howls and staggers back.",
-  "enemy_health_change": -8,
-  "character_health_change": 0,
-  "status_effects": []
-}}
-
-FAILURE example:
-{{
-  "narrative": "You lunge, but the goblin hops aside and raps your wrist with its club.",
-  "enemy_health_change": 0,
-  "character_health_change": -4,
-  "status_effects": []
-}}
 """
 
 
 def _format_previous(previous_turns: List[str]) -> str:
     if not previous_turns:
         return "- (no prior turns)"
-    # Already formatted lines like "Player: ...\nNarrative: ..."
-    # show most recent first
     return "\n".join(f"- {p}" for p in previous_turns[::-1])
 
 
@@ -77,7 +57,7 @@ async def generate_narrative_with_schema(
 ) -> LLMActionOutcome:
     """
     Calls Gemini with a response schema so it returns strict JSON.
-    Falls back to parsing response.text if .parsed is empty.
+    Falls back gracefully if parsing fails.
     """
     outcome = "SUCCESS" if outcome_success else "FAILURE"
 
@@ -96,20 +76,19 @@ async def generate_narrative_with_schema(
         contents=contents,
         config={
             "response_mime_type": "application/json",
-            "response_schema": LLMActionOutcome,  # Pydantic model schema
+            "response_schema": LLMActionOutcome,
         },
     )
 
-    # Prefer typed parse; fallback to JSON string
+    # Prefer structured parse
     if getattr(resp, "parsed", None):
-        return resp.parsed  # -> LLMActionOutcome instance
+        return resp.parsed
 
-    # Fallback parse
+    # Fallback: try manual parse
     try:
         data = json.loads(resp.text)
         return LLMActionOutcome(**data)
     except Exception:
-        # Last resort: minimal safe default
         return LLMActionOutcome(
             narrative="You act, but the dust hasn’t settled enough to tell what happened.",
             enemy_health_change=0,

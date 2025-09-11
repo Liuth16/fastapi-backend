@@ -1,9 +1,8 @@
 from typing import List, Optional
-from beanie import Document
+from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, EmailStr
 from enum import Enum
 from datetime import datetime
-from beanie import PydanticObjectId
 
 
 # ---------- ENUMS ----------
@@ -37,6 +36,10 @@ class Turn(Document):
     effects: List[Effect]
     created_at: datetime = datetime.utcnow()
 
+    # NEW: health snapshots after this turn
+    character_health: int
+    enemy_health: int
+
     class Settings:
         name = "turns"
 
@@ -49,6 +52,10 @@ class TurnOut(BaseModel):
     effects: List[Effect]
     created_at: datetime
 
+    # NEW
+    character_health: int
+    enemy_health: int
+
     class Config:
         from_attributes = True
 
@@ -59,6 +66,7 @@ class Level(Document):
     enemy_name: str
     enemy_description: str
     enemy_health: int
+    enemy_max_health: int          # NEW
     is_completed: bool = False
     turns: List[PydanticObjectId] = []
 
@@ -72,6 +80,7 @@ class LevelOut(BaseModel):
     enemy_name: str
     enemy_description: str
     enemy_health: int
+    enemy_max_health: int          # NEW
     is_completed: bool
 
     class Config:
@@ -111,6 +120,10 @@ class Character(Document):
     attributes: AttributeSet
     level: int = 1
     skill_points: int = 0
+
+    max_health: int               # NEW
+    current_health: int           # NEW
+
     current_campaign_id: Optional[PydanticObjectId] = None
     past_campaign_ids: List[PydanticObjectId] = []
     user_id: PydanticObjectId
@@ -128,6 +141,10 @@ class CharacterOut(BaseModel):
     attributes: AttributeSet
     level: int
     skill_points: int
+
+    # NEW
+    max_health: int
+    current_health: int
 
     class Config:
         from_attributes = True

@@ -53,6 +53,9 @@ async def create_character(
     strength: int, dexterity: int, intelligence: int, charisma: int,
     current_user: User = Depends(get_current_user),
 ):
+    base_level = 1
+    max_health = 20 * base_level
+
     character = Character(
         name=name,
         race=race,
@@ -64,6 +67,9 @@ async def create_character(
             intelligence=intelligence,
             charisma=charisma
         ),
+        level=base_level,
+        max_health=max_health,
+        current_health=max_health,
         user_id=current_user.id
     )
     await character.insert()
@@ -100,7 +106,11 @@ async def create_campaign(
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Character not found")
 
-    # Create Campaign
+    # Reset character health at the start of a new campaign
+    character.max_health = 20 * character.level
+    character.current_health = character.max_health
+    await character.save()
+
     campaign = Campaign(
         campaign_name=name,
         campaign_description=description,
@@ -109,8 +119,7 @@ async def create_campaign(
     )
     await campaign.insert()
 
-    # --- Create Level 1 automatically ---
-    # TODO: replace with LLM call to generate dynamic enemies
+    # --- Create Level 1 ---
     first_enemy = {
         "enemy_name": "Goblin",
         "enemy_description": "A small but vicious goblin blocks your path.",
@@ -122,14 +131,13 @@ async def create_campaign(
         enemy_name=first_enemy["enemy_name"],
         enemy_description=first_enemy["enemy_description"],
         enemy_health=first_enemy["enemy_health"],
+        enemy_max_health=first_enemy["enemy_health"],   # NEW
     )
     await level1.insert()
 
-    # Attach level1 to campaign
     campaign.levels.append(level1.id)
     await campaign.save()
 
-    # Update character state
     character.current_campaign_id = campaign.id
     await character.save()
 
@@ -164,10 +172,9 @@ async def campaign_action(
         raise HTTPException(status_code=403, detail="Not your campaign")
 
     try:
-        result = await process_player_action(campaign, action)
+        result = await process_player_action(campaign, action, character)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
     return result
 
 
@@ -214,6 +221,7 @@ async def get_history(campaign_id: PydanticObjectId, current_user: User = Depend
             "enemy_name": level.enemy_name,
             "enemy_description": level.enemy_description,
             "enemy_health": level.enemy_health,
+            "enemy_max_health": level.enemy_max_health,
             "is_completed": level.is_completed,
             "turns": [TurnOut.model_validate(t) for t in turns],
         })
@@ -221,6 +229,8 @@ async def get_history(campaign_id: PydanticObjectId, current_user: User = Depend
     return {
         "campaign_id": str(campaign.id),
         "campaign_name": campaign.campaign_name,
+        "character_health": character.current_health,
+        "character_max_health": character.max_health,
         "levels": history,
     }
 
