@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from beanie import PydanticObjectId
 from typing import List
 from app.services.gameplay_service import process_player_action
+from app.services.llm_service import generate_campaign_intro
 
 from .models import (
     User, UserOut,
@@ -11,7 +12,8 @@ from .models import (
     Level, LevelOut,
     Turn, TurnOut,
     Effect, EffectType,
-    AttributeSet
+    AttributeSet,
+    CampaignSummary
 )
 from .auth import hash_password, verify_password, create_access_token, get_current_user
 
@@ -83,7 +85,31 @@ async def create_character(
 @router.get("/api/personagem", response_model=List[CharacterOut])
 async def list_characters(current_user: User = Depends(get_current_user)):
     characters = await Character.find(Character.user_id == current_user.id).to_list()
-    return [CharacterOut.model_validate(c) for c in characters]
+
+    result = []
+    for c in characters:
+        # Expand current campaign
+        current_campaign = None
+        if c.current_campaign_id:
+            camp = await Campaign.get(c.current_campaign_id)
+            if camp:
+                current_campaign = CampaignSummary.model_validate(camp)
+
+        # Expand past campaigns
+        past_campaigns = []
+        if c.past_campaign_ids:
+            past = await Campaign.find({"_id": {"$in": c.past_campaign_ids}}).to_list()
+            past_campaigns = [
+                CampaignSummary.model_validate(pc) for pc in past]
+
+        char_out = CharacterOut(
+            **c.dict(),
+            current_campaign=current_campaign,
+            past_campaigns=past_campaigns,
+        )
+        result.append(char_out)
+
+    return result
 
 
 @router.get("/api/personagem/{char_id}", response_model=CharacterOut)
@@ -91,7 +117,25 @@ async def get_character(char_id: PydanticObjectId, current_user: User = Depends(
     character = await Character.get(char_id)
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Character not found")
-    return CharacterOut.model_validate(character)
+
+    # Expand current campaign
+    current_campaign = None
+    if character.current_campaign_id:
+        camp = await Campaign.get(character.current_campaign_id)
+        if camp:
+            current_campaign = CampaignSummary.model_validate(camp)
+
+    # Expand past campaigns
+    past_campaigns = []
+    if character.past_campaign_ids:
+        past = await Campaign.find({"_id": {"$in": character.past_campaign_ids}}).to_list()
+        past_campaigns = [CampaignSummary.model_validate(pc) for pc in past]
+
+    return CharacterOut(
+        **character.dict(),
+        current_campaign=current_campaign,
+        past_campaigns=past_campaigns,
+    )
 
 
 # ---------------------- CAMPAIGN ----------------------
@@ -106,32 +150,30 @@ async def create_campaign(
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Character not found")
 
-    # Reset character health at the start of a new campaign
+    # Reset character health
     character.max_health = 20 * character.level
     character.current_health = character.max_health
     await character.save()
 
+    # Generate campaign intro and first enemy with LLM
+    campaign_init = await generate_campaign_intro(description)
+
     campaign = Campaign(
         campaign_name=name,
         campaign_description=description,
+        intro_narrative=campaign_init.intro_narrative,   # NEW
         character_id=character.id,
         current_level=1,
     )
     await campaign.insert()
 
-    # --- Create Level 1 ---
-    first_enemy = {
-        "enemy_name": "Goblin",
-        "enemy_description": "A small but vicious goblin blocks your path.",
-        "enemy_health": 30,
-    }
-
+    # Create first level
     level1 = Level(
         level_number=1,
-        enemy_name=first_enemy["enemy_name"],
-        enemy_description=first_enemy["enemy_description"],
-        enemy_health=first_enemy["enemy_health"],
-        enemy_max_health=first_enemy["enemy_health"],   # NEW
+        enemy_name=campaign_init.enemy_name,
+        enemy_description=campaign_init.enemy_description,
+        enemy_health=campaign_init.enemy_health,
+        enemy_max_health=campaign_init.enemy_health,
     )
     await level1.insert()
 
@@ -236,7 +278,10 @@ async def get_history(campaign_id: PydanticObjectId, current_user: User = Depend
 
 
 @router.delete("/api/historico/{campaign_id}")
-async def clear_history(campaign_id: PydanticObjectId, current_user: User = Depends(get_current_user)):
+async def clear_history(
+    campaign_id: PydanticObjectId,
+    current_user: User = Depends(get_current_user)
+):
     campaign = await Campaign.get(campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -245,7 +290,12 @@ async def clear_history(campaign_id: PydanticObjectId, current_user: User = Depe
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
-    # For each level in this campaign, delete its turns
+    # Do not allow deletion if campaign is still active
+    if campaign.is_active:
+        raise HTTPException(
+            status_code=400, detail="Cannot delete an active campaign. End it first.")
+
+    # Delete all turns and levels
     for level_id in campaign.levels:
         level = await Level.get(level_id)
         if not level:
@@ -253,7 +303,15 @@ async def clear_history(campaign_id: PydanticObjectId, current_user: User = Depe
 
         if level.turns:
             await Turn.find({"_id": {"$in": level.turns}}).delete()
-            level.turns = []
-            await level.save()
 
-    return {"message": "History cleared"}
+        await level.delete()  # delete the level itself
+
+    # Remove from character's past campaigns
+    if campaign.id in character.past_campaign_ids:
+        character.past_campaign_ids.remove(campaign.id)
+        await character.save()
+
+    # Finally delete the campaign
+    await campaign.delete()
+
+    return {"message": "Campaign and its history have been permanently deleted"}

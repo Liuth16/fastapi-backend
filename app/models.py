@@ -88,9 +88,20 @@ class LevelOut(BaseModel):
 
 
 # ---------- CAMPAIGN ----------
+
+class CampaignSummary(BaseModel):
+    id: PydanticObjectId
+    campaign_name: str
+    intro_narrative: str
+
+    class Config:
+        from_attributes = True
+
+
 class Campaign(Document):
     campaign_name: str
     campaign_description: str
+    intro_narrative: str                     # NEW
     is_active: bool = True
     character_id: PydanticObjectId
     current_level: int = 1
@@ -104,6 +115,7 @@ class CampaignOut(BaseModel):
     id: PydanticObjectId
     campaign_name: str
     campaign_description: str
+    intro_narrative: str             # NEW
     is_active: bool
     current_level: int
 
@@ -145,6 +157,9 @@ class CharacterOut(BaseModel):
     # NEW
     max_health: int
     current_health: int
+
+    current_campaign: Optional[CampaignSummary] = None
+    past_campaigns: List[CampaignSummary] = []
 
     class Config:
         from_attributes = True

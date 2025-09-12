@@ -36,12 +36,12 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
         outcome_success=outcome_success,
         character_name=character.name,
         enemy_name=level.enemy_name,
+        enemy_description=level.enemy_description,     # NEW
         enemy_health=level.enemy_health,
         level_number=level.level_number,
+        intro_narrative=campaign.intro_narrative,      # NEW
         previous_turns=previous_turns,
     )
-
-    print(llm_outcome)
 
     # Apply health changes
     level.enemy_health = max(0, level.enemy_health +
