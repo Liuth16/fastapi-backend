@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from beanie import PydanticObjectId
 from typing import List
-from app.services.gameplay_service import process_player_action
-from app.services.llm_service import generate_campaign_intro
+from app.services.gameplay_service import process_player_action, process_free_action
+from app.services.llm_service import (
+    generate_intro_narrative, generate_enemy_for_level, generate_free_narrative, generate_free_intro)
 
 from .models import (
     User, UserOut,
@@ -13,7 +14,8 @@ from .models import (
     Turn, TurnOut,
     Effect, EffectType,
     AttributeSet,
-    CampaignSummary
+    CampaignSummary,
+    CampaignMode
 )
 from .auth import hash_password, verify_password, create_access_token, get_current_user
 
@@ -139,11 +141,13 @@ async def get_character(char_id: PydanticObjectId, current_user: User = Depends(
 
 
 # ---------------------- CAMPAIGN ----------------------
+
 @router.post("/api/campanha", response_model=CampaignOut)
 async def create_campaign(
     character_id: PydanticObjectId,
     name: str,
     description: str,
+    mode: CampaignMode = CampaignMode.STANDARD,
     current_user: User = Depends(get_current_user),
 ):
     character = await Character.get(character_id)
@@ -155,35 +159,87 @@ async def create_campaign(
     character.current_health = character.max_health
     await character.save()
 
-    # Generate campaign intro and first enemy with LLM
-    campaign_init = await generate_campaign_intro(description)
+    # === STANDARD MODE ===
+    if mode == CampaignMode.STANDARD:
+        # 1. Generate enemy
+        enemy_init = await generate_enemy_for_level(name, description)
 
-    campaign = Campaign(
-        campaign_name=name,
-        campaign_description=description,
-        intro_narrative=campaign_init.intro_narrative,   # NEW
-        character_id=character.id,
-        current_level=1,
-    )
-    await campaign.insert()
+        # 2. Create campaign
+        campaign = Campaign(
+            campaign_name=name,
+            campaign_description=description,
+            mode=CampaignMode.STANDARD,
+            character_id=character.id,
+            current_level=1,
+        )
+        await campaign.insert()
 
-    # Create first level
-    level1 = Level(
-        level_number=1,
-        enemy_name=campaign_init.enemy_name,
-        enemy_description=campaign_init.enemy_description,
-        enemy_health=campaign_init.enemy_health,
-        enemy_max_health=campaign_init.enemy_health,
-    )
-    await level1.insert()
+        # 3. Create first level
+        level1 = Level(
+            level_number=1,
+            enemy_name=enemy_init.enemy_name,
+            enemy_description=enemy_init.enemy_description,
+            enemy_health=enemy_init.enemy_health,
+            enemy_max_health=enemy_init.enemy_health,
+        )
+        await level1.insert()
+        campaign.levels.append(level1.id)
+        await campaign.save()
 
-    campaign.levels.append(level1.id)
-    await campaign.save()
+        # 4. Generate intro narrative (Turn 1)
+        intro = await generate_intro_narrative(
+            description,
+            enemy_init.enemy_name,
+            enemy_init.enemy_description,
+        )
+        turn1 = Turn(
+            turn_number=1,
+            user_input=description,  # campaign description acts as "player input"
+            narrative=intro.narrative,
+            effects=[],
+            character_health=character.current_health,
+            enemy_health=level1.enemy_health,
+        )
+        await turn1.insert()
+        level1.turns.append(turn1.id)
+        await level1.save()
 
-    character.current_campaign_id = campaign.id
-    await character.save()
+        character.current_campaign_id = campaign.id
+        await character.save()
 
-    return CampaignOut.model_validate(campaign)
+        return CampaignOut.model_validate(campaign)
+
+    # === FREE MODE ===
+    else:
+        campaign = Campaign(
+            campaign_name=name,
+            campaign_description=description,
+            mode=CampaignMode.FREE,
+            character_id=character.id,
+            turns=[],
+        )
+        await campaign.insert()
+
+        # Generate free intro (Turn 1)
+        intro = await generate_free_intro(description, character.name)
+        turn1 = Turn(
+            turn_number=1,
+            user_input=description,
+            narrative=intro.narrative,
+            effects=[],
+            character_health=character.current_health,
+            enemy_health=0,  # no enemy in free mode
+        )
+        await turn1.insert()
+
+        # In free mode, turns belong directly to campaign
+        campaign.turns.append(turn1.id)
+        await campaign.save()
+
+        character.current_campaign_id = campaign.id
+        await character.save()
+
+        return CampaignOut.model_validate(campaign)
 
 
 @router.get("/api/campanha/{campaign_id}", response_model=CampaignOut)
@@ -214,7 +270,10 @@ async def campaign_action(
         raise HTTPException(status_code=403, detail="Not your campaign")
 
     try:
-        result = await process_player_action(campaign, action, character)
+        if campaign.mode == CampaignMode.STANDARD:
+            result = await process_player_action(campaign, action, character)
+        else:
+            result = await process_free_action(campaign, action, character)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result
@@ -230,19 +289,27 @@ async def end_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
     if not character or str(character.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your campaign")
 
+    # Mark campaign inactive
     campaign.is_active = False
     await campaign.save()
 
-    character.past_campaign_ids.append(campaign.id)
+    # Track campaign in character
+    if campaign.id not in character.past_campaign_ids:
+        character.past_campaign_ids.append(campaign.id)
     character.current_campaign_id = None
     await character.save()
 
     return {"message": "Campaign ended"}
 
-
 # ---------------------- HISTORY ----------------------
+
+
 @router.get("/api/historico/{campaign_id}")
-async def get_history(campaign_id: PydanticObjectId, current_user: User = Depends(get_current_user)) -> dict:
+@router.get("/api/historico/{campaign_id}")
+async def get_history(
+    campaign_id: PydanticObjectId,
+    current_user: User = Depends(get_current_user)
+) -> dict:
     campaign = await Campaign.get(campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -252,29 +319,49 @@ async def get_history(campaign_id: PydanticObjectId, current_user: User = Depend
         raise HTTPException(status_code=403, detail="Not your campaign")
 
     history = []
-    for level_id in campaign.levels:
-        level = await Level.get(level_id)
-        if not level:
-            continue
 
-        turns = await Turn.find({"_id": {"$in": level.turns}}).to_list()
-        history.append({
-            "level_number": level.level_number,
-            "enemy_name": level.enemy_name,
-            "enemy_description": level.enemy_description,
-            "enemy_health": level.enemy_health,
-            "enemy_max_health": level.enemy_max_health,
-            "is_completed": level.is_completed,
+    # === STANDARD MODE ===
+    if campaign.mode == CampaignMode.STANDARD:
+        for level_id in campaign.levels:
+            level = await Level.get(level_id)
+            if not level:
+                continue
+
+            turns = await Turn.find({"_id": {"$in": level.turns}}).to_list()
+            history.append({
+                "level_number": level.level_number,
+                "enemy_name": level.enemy_name,
+                "enemy_description": level.enemy_description,
+                "enemy_health": level.enemy_health,
+                "enemy_max_health": level.enemy_max_health,
+                "is_completed": level.is_completed,
+                "turns": [TurnOut.model_validate(t) for t in turns],
+            })
+
+        return {
+            "campaign_id": str(campaign.id),
+            "campaign_name": campaign.campaign_name,
+            "mode": campaign.mode,
+            "character_health": character.current_health,
+            "character_max_health": character.max_health,
+            "levels": history,
+        }
+
+    # === FREE MODE ===
+    elif campaign.mode == CampaignMode.FREE:
+        turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
+
+        return {
+            "campaign_id": str(campaign.id),
+            "campaign_name": campaign.campaign_name,
+            "mode": campaign.mode,
+            "character_health": character.current_health,
+            "character_max_health": character.max_health,
             "turns": [TurnOut.model_validate(t) for t in turns],
-        })
+        }
 
-    return {
-        "campaign_id": str(campaign.id),
-        "campaign_name": campaign.campaign_name,
-        "character_health": character.current_health,
-        "character_max_health": character.max_health,
-        "levels": history,
-    }
+    else:
+        raise HTTPException(status_code=400, detail="Unknown campaign mode")
 
 
 @router.delete("/api/historico/{campaign_id}")
@@ -293,18 +380,25 @@ async def clear_history(
     # Do not allow deletion if campaign is still active
     if campaign.is_active:
         raise HTTPException(
-            status_code=400, detail="Cannot delete an active campaign. End it first.")
+            status_code=400, detail="Cannot delete an active campaign. End it first."
+        )
 
-    # Delete all turns and levels
-    for level_id in campaign.levels:
-        level = await Level.get(level_id)
-        if not level:
-            continue
+    # === STANDARD MODE ===
+    if campaign.mode == CampaignMode.STANDARD:
+        for level_id in campaign.levels:
+            level = await Level.get(level_id)
+            if not level:
+                continue
 
-        if level.turns:
-            await Turn.find({"_id": {"$in": level.turns}}).delete()
+            if level.turns:
+                await Turn.find({"_id": {"$in": level.turns}}).delete()
 
-        await level.delete()  # delete the level itself
+            await level.delete()
+
+    # === FREE MODE ===
+    elif campaign.mode == CampaignMode.FREE:
+        if campaign.turns:
+            await Turn.find({"_id": {"$in": campaign.turns}}).delete()
 
     # Remove from character's past campaigns
     if campaign.id in character.past_campaign_ids:

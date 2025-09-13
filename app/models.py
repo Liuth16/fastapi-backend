@@ -9,8 +9,6 @@ from datetime import datetime
 class EffectType(str, Enum):
     DAMAGE = "damage"
     HEAL = "heal"
-    BUFF = "buff"
-    DEBUFF = "debuff"
 
 
 # ---------- SUPPORT MODELS ----------
@@ -25,7 +23,6 @@ class Effect(BaseModel):
     type: EffectType
     target: str   # "enemy" or "self"
     value: int
-    attribute: Optional[str] = None
 
 
 # ---------- TURN ----------
@@ -88,11 +85,15 @@ class LevelOut(BaseModel):
 
 
 # ---------- CAMPAIGN ----------
+class CampaignMode(str, Enum):
+    STANDARD = "standard"
+    FREE = "free"
+
 
 class CampaignSummary(BaseModel):
     id: PydanticObjectId
     campaign_name: str
-    intro_narrative: str
+    mode: CampaignMode   # expose mode here too so summaries are consistent
 
     class Config:
         from_attributes = True
@@ -101,11 +102,16 @@ class CampaignSummary(BaseModel):
 class Campaign(Document):
     campaign_name: str
     campaign_description: str
-    intro_narrative: str                     # NEW
+    mode: CampaignMode = CampaignMode.STANDARD
     is_active: bool = True
     character_id: PydanticObjectId
+
+    # Only used for STANDARD campaigns
     current_level: int = 1
-    levels: List[PydanticObjectId] = []  # references to Level docs
+    levels: List[PydanticObjectId] = []
+
+    # Only used for FREE campaigns
+    turns: List[PydanticObjectId] = []
 
     class Settings:
         name = "campaigns"
@@ -115,9 +121,9 @@ class CampaignOut(BaseModel):
     id: PydanticObjectId
     campaign_name: str
     campaign_description: str
-    intro_narrative: str             # NEW
     is_active: bool
     current_level: int
+    mode: CampaignMode   # ✅ ensure always present
 
     class Config:
         from_attributes = True
@@ -154,10 +160,10 @@ class CharacterOut(BaseModel):
     level: int
     skill_points: int
 
-    # NEW
     max_health: int
     current_health: int
 
+    # ✅ expanded summaries now include mode
     current_campaign: Optional[CampaignSummary] = None
     past_campaigns: List[CampaignSummary] = []
 

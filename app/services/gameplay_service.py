@@ -1,7 +1,8 @@
 # app/services/gameplay_service.py
 import random
 from app.models import Campaign, Character, Level, Turn, Effect, EffectType
-from app.services.llm_service import generate_narrative_with_schema
+from app.services.llm_service import generate_narrative_with_schema, generate_free_narrative
+from app.utils.combat import build_combat_state
 
 
 async def process_player_action(campaign: Campaign, action: str, character: Character):
@@ -88,5 +89,58 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
         "enemy_health": level.enemy_health,
         "character_health": character.current_health,
         "enemy_defeated": level.is_completed,
+        "turn_number": turn.turn_number,
+    }
+
+
+async def process_free_action(campaign: Campaign, action: str, character: Character):
+    # Collect previous turns
+    previous_turns = []
+    if campaign.turns:
+        turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
+        for t in turns:
+            previous_turns.append(
+                f"Player: {t.user_input} | Narrative: {t.narrative} | Effects: {t.effects}"
+            )
+
+    # Build combat state (always included, even if no combat happens)
+    combat_state = build_combat_state(character)
+
+    # Send all history + combat state to LLM
+    llm_outcome = await generate_free_narrative(
+        action=action,
+        character_name=character.name,
+        combat_state=combat_state,
+        previous_turns=previous_turns,
+    )
+
+    print("LLM outcome:", llm_outcome)
+
+    # Apply effects if combat happened
+    for effect in llm_outcome.effects:
+        if effect.target == "self":
+            character.current_health = max(
+                0, character.current_health + effect.value
+            )
+    await character.save()
+
+    # Save turn
+    turn = Turn(
+        turn_number=len(campaign.turns) + 1,
+        user_input=action,
+        narrative=llm_outcome.narrative,
+        effects=llm_outcome.effects,
+        character_health=character.current_health,
+        enemy_health=0,  # Not relevant in free mode
+    )
+    await turn.insert()
+
+    campaign.turns.append(turn.id)
+    await campaign.save()
+
+    return {
+        "narrative": llm_outcome.narrative,
+        "effects": [e.dict() for e in llm_outcome.effects],
+        "character_health": character.current_health,
         "turn_number": turn.turn_number,
     }
