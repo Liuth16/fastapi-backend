@@ -305,7 +305,6 @@ async def end_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
 
 
 @router.get("/api/historico/{campaign_id}")
-@router.get("/api/historico/{campaign_id}")
 async def get_history(
     campaign_id: PydanticObjectId,
     current_user: User = Depends(get_current_user)

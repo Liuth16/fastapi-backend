@@ -25,9 +25,26 @@ class Effect(BaseModel):
     value: int
 
 
+class CombatAttributes(BaseModel):
+    strength: int
+    dexterity: int
+    intelligence: int
+    charisma: int
+
+
+class CombatSide(BaseModel):
+    health: int
+    max_health: Optional[int] = None
+    attributes: CombatAttributes
+    roll: int
+
+
 class CombatStateModel(BaseModel):
-    player: dict   # You can refine into a Pydantic model if you want strict typing
-    enemy: dict
+    player: CombatSide
+    enemy: CombatSide
+    chosen_attribute: Optional[str] = None
+    player_total: Optional[int] = None
+    enemy_total: Optional[int] = None
 
 
 class EnemyDefeatedReward(BaseModel):
@@ -48,12 +65,17 @@ class Turn(Document):
     character_health: int
     enemy_health: int
 
-    # NEW: full combat state (scaffold or real)
+    # NEW: full combat state (always deserialized as CombatStateModel)
     combat_state: Optional[CombatStateModel] = None
+
+    # NEW: explicit combat flag
     active_combat: bool = False
+
+    # NEW: reward when enemy defeated
     enemy_defeated_reward: EnemyDefeatedReward = Field(
-        default_factory=EnemyDefeatedReward
-    )
+        default_factory=EnemyDefeatedReward)
+
+    # NEW: suggested actions for next turn
     suggested_actions: List[str] = Field(default_factory=list)
 
     class Settings:
@@ -133,7 +155,7 @@ class Campaign(Document):
     levels: List[PydanticObjectId] = []
 
     # Only used for FREE campaigns
-    turns: List[PydanticObjectId] = []
+    turns: List[PydanticObjectId] = Field(default_factory=list)
 
     class Settings:
         name = "campaigns"

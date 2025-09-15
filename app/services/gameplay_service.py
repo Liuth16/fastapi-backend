@@ -29,8 +29,6 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
             previous_turns.append(
                 f"Player: {t.user_input} | Narrative: {t.narrative}")
 
-    print("Previous turns:", previous_turns)
-
     # Call Gemini for structured narrative
     llm_outcome = await generate_narrative_with_schema(
         action=action,
@@ -129,6 +127,9 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     else:
         combat_state = CombatStateModel(**build_combat_state(character))
 
+    print(
+        f"Debug print: combat_state before LLM: {combat_state}\n \n Previous turns: {previous_turns}\n \n")
+
     # --- Send to LLM
     llm_outcome = await generate_free_narrative(
         action=action,
@@ -136,6 +137,8 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         combat_state=combat_state.model_dump(),
         previous_turns=previous_turns,
     )
+
+    print(f"Debug print: LLM outcome: {llm_outcome}\n \n")
 
     # --- Apply effects
     for effect in llm_outcome.effects:
@@ -175,16 +178,13 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         effects=llm_outcome.effects,
         character_health=character.current_health,
         enemy_health=llm_outcome.enemy_health or 0,
-        combat_state=(
-            llm_outcome.combat_state.model_dump()
-            if llm_outcome.combat_state else None
-        ),
+        combat_state=llm_outcome.combat_state,   # direct model
         active_combat=active_combat,
-        enemy_defeated_reward=reward,
+        enemy_defeated_reward=reward,           # direct model
         suggested_actions=llm_outcome.suggested_actions,
     )
     await turn.insert()
-
+# ✅ Attach turn to campaign
     campaign.turns.append(turn.id)
     await campaign.save()
 
@@ -193,7 +193,7 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         "effects": [e.dict() for e in turn.effects],
         "character_health": turn.character_health,
         "enemy_health": turn.enemy_health,
-        "combat_state": turn.combat_state.model_dump() if llm_outcome.combat_state else None,
+        "combat_state": turn.combat_state.model_dump() if turn.combat_state else None,
         "active_combat": turn.active_combat,
         "enemy_defeated_reward": turn.enemy_defeated_reward.model_dump(),
         "turn_number": turn.turn_number,

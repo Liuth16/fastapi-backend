@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import errors as genai_errors
 from app.config import settings  # centralized config
-from app.models import Effect
+from app.models import Effect, CombatStateModel, EnemyDefeatedReward
 
 
 # Initialize Gemini client using settings
@@ -26,35 +26,6 @@ class LLMActionOutcome(BaseModel):
 
 class IntroInit(BaseModel):
     narrative: str
-
-
-class CombatAttributes(BaseModel):
-    strength: int
-    dexterity: int
-    intelligence: int
-    charisma: int
-
-
-class CombatSide(BaseModel):
-    health: int
-    # player has max_health; enemy may omit -> make it optional
-    max_health: Optional[int] = None
-    attributes: CombatAttributes
-    roll: int
-
-
-class CombatStateModel(BaseModel):
-    player: CombatSide
-    enemy: CombatSide
-    # optional, LLM can include when it actually resolves combat
-    chosen_attribute: Optional[str] = None
-    player_total: Optional[int] = None
-    enemy_total: Optional[int] = None
-
-
-class EnemyDefeatedReward(BaseModel):
-    gainedExperience: Optional[int] = None
-    loot: List[str] = Field(default_factory=list)
 
 
 class LLMFreeOutcome(BaseModel):
@@ -304,8 +275,6 @@ async def generate_free_narrative(
             out: LLMFreeOutcome = resp.parsed
         else:
             out = LLMFreeOutcome(**json.loads(resp.text))
-
-        print(f"LLM Free Outcome: {out}\n")
 
         # ✅ Always normalize enemyDefeatedReward
         if out.enemyDefeatedReward is None:
