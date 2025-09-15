@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, EmailStr
 from enum import Enum
@@ -33,9 +33,14 @@ class Turn(Document):
     effects: List[Effect]
     created_at: datetime = datetime.utcnow()
 
-    # NEW: health snapshots after this turn
+    # health snapshots
     character_health: int
     enemy_health: int
+
+    # Free-mode extras (optional)
+    combat_state: Optional[Dict[str, Any]] = None
+    enemy_defeated_reward: Optional[Dict[str, Any]] = None
+    suggested_actions: List[str] = []
 
     class Settings:
         name = "turns"
@@ -49,9 +54,13 @@ class TurnOut(BaseModel):
     effects: List[Effect]
     created_at: datetime
 
-    # NEW
     character_health: int
     enemy_health: int
+
+    # expose for clients
+    combat_state: Optional[Dict[str, Any]] = None
+    enemy_defeated_reward: Optional[Dict[str, Any]] = None
+    suggested_actions: List[str] = []
 
     class Config:
         from_attributes = True

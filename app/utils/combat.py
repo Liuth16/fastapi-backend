@@ -43,12 +43,12 @@ def build_combat_state(
     enemy_state: Optional[Dict] = None,
 ) -> Dict:
     """
-    Returns a combat_state with *rolls only*.
-    The LLM will choose which single attribute to use as the bonus for each side.
+    Returns a combat_state scaffold with rolls only.
+    - If enemy_state is provided, use it.
+    - Otherwise, generate an estimated baseline enemy from character stats.
     """
     if enemy_state is None:
-        enemy_state = {"health": 0, "attributes": {
-            "strength": 0, "dexterity": 0, "intelligence": 0, "charisma": 0}}
+        enemy_state = estimate_enemy_baseline(character)
 
     return {
         "player": {

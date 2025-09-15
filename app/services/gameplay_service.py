@@ -96,17 +96,27 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
 async def process_free_action(campaign: Campaign, action: str, character: Character):
     # Collect previous turns
     previous_turns = []
+    last_combat_state = None
     if campaign.turns:
         turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
         for t in turns:
             previous_turns.append(
-                f"Player: {t.user_input} | Narrative: {t.narrative} | Effects: {t.effects}"
-            )
+                f"Player: {t.user_input} | Narrative: {t.narrative}")
+        last_turn = turns[-1]
+        if last_turn.combat_state and last_turn.combat_state != {}:
+            if last_turn.combat_state["player"]["health"] > 0 and last_turn.combat_state["enemy"]["health"] > 0:
+                last_combat_state = last_turn.combat_state
 
-    # Build combat state (always included, even if no combat happens)
-    combat_state = build_combat_state(character)
+    # Decide which combat state to send
+    if last_combat_state:
+        combat_state = last_combat_state
+    else:
+        combat_state = build_combat_state(character)
 
-    # Send all history + combat state to LLM
+    # print debug
+    print(f"scaffold combat state/current combat state: {combat_state}")
+
+    # Send to LLM
     llm_outcome = await generate_free_narrative(
         action=action,
         character_name=character.name,
@@ -114,33 +124,38 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         previous_turns=previous_turns,
     )
 
-    print("LLM outcome:", llm_outcome)
-
-    # Apply effects if combat happened
+    # Apply effects to character
     for effect in llm_outcome.effects:
         if effect.target == "self":
             character.current_health = max(
-                0, character.current_health + effect.value
-            )
+                0, character.current_health + effect.value)
     await character.save()
 
-    # Save turn
+    # Save turn with returned combat state
     turn = Turn(
         turn_number=len(campaign.turns) + 1,
         user_input=action,
         narrative=llm_outcome.narrative,
         effects=llm_outcome.effects,
         character_health=character.current_health,
-        enemy_health=0,  # Not relevant in free mode
+        enemy_health=llm_outcome.enemy_health or 0,
+        combat_state=(llm_outcome.combat_state.model_dump()
+                      if llm_outcome.combat_state else {}),
+        enemy_defeated_reward=(
+            llm_outcome.enemyDefeatedReward.model_dump()
+            if llm_outcome.enemyDefeatedReward else {"gainedExperience": None, "loot": []}
+        ),
+        suggested_actions=llm_outcome.suggested_actions or [],
     )
     await turn.insert()
 
-    campaign.turns.append(turn.id)
-    await campaign.save()
-
     return {
-        "narrative": llm_outcome.narrative,
-        "effects": [e.dict() for e in llm_outcome.effects],
-        "character_health": character.current_health,
+        "narrative": turn.narrative,
+        "effects": [e.dict() for e in turn.effects],
+        "character_health": turn.character_health,
+        "enemy_health": turn.enemy_health,
+        "combat_state": turn.combat_state,
+        "enemy_defeated_reward": turn.enemy_defeated_reward,
         "turn_number": turn.turn_number,
+        "suggested_actions": getattr(llm_outcome, "suggested_actions", []),
     }
