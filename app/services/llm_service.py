@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import errors as genai_errors
@@ -63,7 +63,15 @@ class LLMFreeOutcome(BaseModel):
     enemy_health: Optional[int] = None  # null/None if no enemy
     combat_state: Optional[CombatStateModel] = None  # {} -> None in schema
     enemyDefeatedReward: EnemyDefeatedReward = Field(
-        default_factory=EnemyDefeatedReward)
+        default_factory=lambda: EnemyDefeatedReward(
+            gainedExperience=None, loot=[]
+        )
+    )
+
+    # Combat state flag
+    active_combat: bool = False
+
+    # Suggestions
     suggested_actions: List[str] = Field(default_factory=list)
 
 
@@ -107,36 +115,47 @@ Write an engaging introductory narrative (2–3 sentences).
 Output JSON with field "narrative".
 """
 
-FREE_PROMPT_TEMPLATE = (
-    "You are the game narrator for a freeform text-based RPG.\n\n"
-    "Player action: \"{action}\"\n\n"
-    "Game state:\n"
-    "- Character: {character_name}\n\n"
-    "Combat state (always provided — ignore unless hostility occurs):\n"
-    "{combat_state}\n\n"
-    "Previous turns:\n"
-    "{previous}\n\n"
-    "## RULES\n\n"
-    "### Combat handling\n"
-    "1. Always include the field \"combat_state\".\n"
-    "   - If no combat occurs this turn: set \"combat_state\": {{}} (empty object).\n"
-    "   - If combat occurs or continues:\n"
-    "     - Use the provided combat_state as the base.\n"
-    "     - Choose ONE relevant attribute for both sides (the **same one** for player and enemy),\n"
-    "       based on the player action semantics (e.g., dodging -> dexterity, spell -> intelligence, strike -> strength).\n"
-    "     - Compute totals: player_total = player.roll + player.attributes[chosen]; enemy_total = enemy.roll + enemy.attributes[chosen].\n"
-    "     - The higher total succeeds; apply effects using ONLY the allowed format.\n"
-    "     - Update and return the new \"combat_state\" with health changes applied.\n\n"
-    "2. Effects must use ONLY this format:\n"
-    "   - {{ \"type\": \"damage\" | \"heal\", \"target\": \"enemy\" | \"self\", \"value\": <int> }}\n\n"
-    "3. YOU track enemy health. Return an updated integer \"enemy_health\" when combat happens; otherwise set it to null.\n\n"
-    "4. Keep narrative and suggestions in the same language as the player's input. Avoid meta-game language.\n\n"
-    "5. Always include \"enemyDefeatedReward\":\n"
-    "   - If no enemy was defeated: return {{ \"gainedExperience\": null, \"loot\": [] }}.\n"
-    "   - If an enemy was defeated: populate with meaningful values.\n\n"
-    "### Action Suggestions\n"
-    "At the end, ALWAYS provide \"suggested_actions\": a short list (3–5) of concise next actions in the player's language.\n"
-)
+FREE_PROMPT_TEMPLATE = """You are the game narrator for a freeform text-based RPG.
+
+Player action: "{action}"
+
+Game state:
+- Character: {character_name}
+
+Combat state (always provided — ignore unless hostility occurs):
+{combat_state}
+
+Previous turns:
+{previous}
+
+Rules for combat resolution (ONLY if hostility occurs this turn, or you introduce it):
+
+### Combat handling
+1. Always include the field "combat_state".
+   - If **no combat occurs this turn**: set "combat_state": {{}} (empty object).
+   - If **combat occurs or continues**: 
+     - Use the provided combat_state as the base.
+     - Choose ONE relevant attribute for each side.
+       - Example: player_total = roll + dexterity if dodging, roll + intelligence if casting.
+       - Example: enemy_total = roll + strength
+       - Always pick the same relevant attribute for both enemy and player. Example: if the player used dexterity, the enemy will also use dexterity.
+     - Apply the chosen action outcome based on the roll of both player and enemy, highest roll + bonus succeed, and update health values accordingly.
+     - Return the updated "combat_state" object.
+
+2. Effects must use ONLY this format:
+   - {{ "type": "damage" | "heal", "target": "enemy" | "self", "value": <int> }}
+
+3. YOU track enemy health. Return updated integer "enemy_health" when combat is present this turn. If no enemy is present, set "enemy_health" to null.
+
+4. Deliver rich, immersive narrative responses...
+
+5. Always include "enemyDefeatedReward":
+   - If no enemy was defeated: return {{ "gainedExperience": null, "loot": [] }}.
+   - If an enemy was defeated: populate with meaningful values.
+
+### Action Suggestions
+At the end of your response, ALWAYS provide a field "suggested_actions".
+"""
 
 
 _ENEMY_PROMPT = """You are the dungeon master.
@@ -270,26 +289,39 @@ async def generate_free_narrative(
         combat_state=json.dumps(combat_state, indent=2, ensure_ascii=False),
         previous=_format_previous(previous_turns),
     )
+
     try:
         resp = _client.models.generate_content(
             model=_MODEL,
             contents=contents,
             config={
                 "response_mime_type": "application/json",
-                "response_schema": LLMFreeOutcome,  # STRICT model, no dicts
+                "response_schema": LLMFreeOutcome,  # our strict schema
             },
         )
+
         if getattr(resp, "parsed", None):
-            out = resp.parsed
+            out: LLMFreeOutcome = resp.parsed
         else:
             out = LLMFreeOutcome(**json.loads(resp.text))
 
-        print(f"LLM Free Outcome: {out} \n \n")
+        print(f"LLM Free Outcome: {out}\n")
 
-        # Guarantee reward object is present & normalized when no defeat
+        # ✅ Always normalize enemyDefeatedReward
         if out.enemyDefeatedReward is None:
             out.enemyDefeatedReward = EnemyDefeatedReward(
-                gainedExperience=None, loot=[])
+                gainedExperience=None, loot=[]
+            )
+
+        # ✅ Ensure combat_state and active_combat consistency
+        if not out.active_combat:
+            out.combat_state = None
+            out.enemy_health = None
+
+        # ✅ Ensure suggested_actions is always a list
+        if out.suggested_actions is None:
+            out.suggested_actions = []
+
         return out
 
     except genai_errors.ServerError as e:
@@ -297,10 +329,12 @@ async def generate_free_narrative(
         return LLMFreeOutcome(
             narrative="The scene pauses; tension hangs in the air.",
             effects=[],
+            combat_state={},
+            active_combat=False,
             enemy_health=None,
-            combat_state=None,
             enemyDefeatedReward=EnemyDefeatedReward(
-                gainedExperience=None, loot=[]),
+                gainedExperience=None, loot=[]
+            ),
             suggested_actions=[],
         )
     except Exception as e:
@@ -308,10 +342,12 @@ async def generate_free_narrative(
         return LLMFreeOutcome(
             narrative="You act, but nothing conclusive happens.",
             effects=[],
+            combat_state={},
+            active_combat=False,
             enemy_health=None,
-            combat_state=None,
             enemyDefeatedReward=EnemyDefeatedReward(
-                gainedExperience=None, loot=[]),
+                gainedExperience=None, loot=[]
+            ),
             suggested_actions=[],
         )
 

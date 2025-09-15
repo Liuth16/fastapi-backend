@@ -1,6 +1,6 @@
 from typing import List, Optional, Any, Dict
 from beanie import Document, PydanticObjectId
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from enum import Enum
 from datetime import datetime
 
@@ -25,7 +25,18 @@ class Effect(BaseModel):
     value: int
 
 
+class CombatStateModel(BaseModel):
+    player: dict   # You can refine into a Pydantic model if you want strict typing
+    enemy: dict
+
+
+class EnemyDefeatedReward(BaseModel):
+    gainedExperience: Optional[int] = None
+    loot: List[str] = Field(default_factory=list)
+
 # ---------- TURN ----------
+
+
 class Turn(Document):
     turn_number: int
     user_input: str
@@ -33,14 +44,17 @@ class Turn(Document):
     effects: List[Effect]
     created_at: datetime = datetime.utcnow()
 
-    # health snapshots
+    # Health snapshots after this turn
     character_health: int
     enemy_health: int
 
-    # Free-mode extras (optional)
-    combat_state: Optional[Dict[str, Any]] = None
-    enemy_defeated_reward: Optional[Dict[str, Any]] = None
-    suggested_actions: List[str] = []
+    # NEW: full combat state (scaffold or real)
+    combat_state: Optional[CombatStateModel] = None
+    active_combat: bool = False
+    enemy_defeated_reward: EnemyDefeatedReward = Field(
+        default_factory=EnemyDefeatedReward
+    )
+    suggested_actions: List[str] = Field(default_factory=list)
 
     class Settings:
         name = "turns"
@@ -56,11 +70,10 @@ class TurnOut(BaseModel):
 
     character_health: int
     enemy_health: int
-
-    # expose for clients
-    combat_state: Optional[Dict[str, Any]] = None
-    enemy_defeated_reward: Optional[Dict[str, Any]] = None
-    suggested_actions: List[str] = []
+    combat_state: Optional[CombatStateModel]
+    active_combat: bool
+    enemy_defeated_reward: EnemyDefeatedReward
+    suggested_actions: List[str]
 
     class Config:
         from_attributes = True
