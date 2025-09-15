@@ -2,7 +2,7 @@
 import random
 from app.models import Campaign, Character, Turn, Effect, EffectType, EnemyDefeatedReward, CombatStateModel, Level
 from app.services.llm_service import generate_narrative_with_schema, generate_free_narrative
-from app.utils.combat import build_combat_state
+from app.utils.combat import build_combat_state, calculate_effect_value
 
 
 async def process_player_action(campaign: Campaign, action: str, character: Character):
@@ -99,7 +99,8 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
         for t in turns:
             previous_turns.append(
-                f"Player: {t.user_input} | Narrative: {t.narrative}")
+                f"Player: {t.user_input} | Narrative: {t.narrative}"
+            )
 
         last_turn = turns[-1]
 
@@ -128,7 +129,7 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         combat_state = CombatStateModel(**build_combat_state(character))
 
     print(
-        f"Debug print: combat_state before LLM: {combat_state}\n \n Previous turns: {previous_turns}\n \n")
+        f"Debug print combat state before sending to llm: {combat_state} \n \n Previous turns: {previous_turns}")
 
     # --- Send to LLM
     llm_outcome = await generate_free_narrative(
@@ -138,29 +139,59 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         previous_turns=previous_turns,
     )
 
-    print(f"Debug print: LLM outcome: {llm_outcome}\n \n")
+    print(f"Debug print LLM outcome: {llm_outcome} \n \n")
 
-    # --- Apply effects
+    # --- Apply effects (now compute values and persist them)
+    computed_effects = []
     for effect in llm_outcome.effects:
-        if effect.target == "self":
-            character.current_health = max(
-                0, character.current_health + effect.value)
+        # decide value dynamically
+        value = calculate_effect_value(
+            attacker=combat_state.player,
+            defender=combat_state.enemy
+        )
+        # negative for damage on self/enemy, positive for heal
+        if effect.type == EffectType.DAMAGE:
+            if effect.target == "self":
+                character.current_health = max(
+                    0, min(character.max_health,
+                           character.current_health - value)
+                )
+            elif effect.target == "enemy" and llm_outcome.combat_state:
+                enemy = llm_outcome.combat_state.enemy
+                enemy.health = max(0, enemy.health - value)
+
+        elif effect.type == EffectType.HEAL:
+            if effect.target == "self":
+                character.current_health = max(
+                    0, min(character.max_health,
+                           character.current_health + value)
+                )
+            elif effect.target == "enemy" and llm_outcome.combat_state:
+                enemy = llm_outcome.combat_state.enemy
+                if enemy.max_health is not None:
+                    enemy.health = min(enemy.max_health, enemy.health + value)
+
+        # ✅ store effect with calculated value
+        computed_effects.append(
+            Effect(type=effect.type, target=effect.target, value=value)
+        )
+
+        print("Computed effects:", computed_effects)
+
     await character.save()
 
-    # --- Compute active combat (model safe)
-    active_combat = False
+    # --- Clamp enemy health
     if llm_outcome.combat_state:
-        try:
-            active_combat = (
-                llm_outcome.combat_state.player.health > 0
-                and llm_outcome.combat_state.enemy.health > 0
-            )
-        except AttributeError:
-            # if somehow it's still a dict
-            active_combat = (
-                llm_outcome.combat_state.get("player", {}).get("health", 0) > 0
-                and llm_outcome.combat_state.get("enemy", {}).get("health", 0) > 0
-            )
+        enemy = llm_outcome.combat_state.enemy
+        if enemy.max_health is not None:
+            enemy.health = max(0, min(enemy.max_health, enemy.health))
+
+    # --- Compute active combat
+    active_combat = (
+        llm_outcome.combat_state
+        and llm_outcome.combat_state.player.health > 0
+        and llm_outcome.combat_state.enemy.health > 0
+    )
 
     # --- Normalize reward
     if isinstance(llm_outcome.enemyDefeatedReward, EnemyDefeatedReward):
@@ -175,16 +206,17 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         turn_number=len(campaign.turns) + 1,
         user_input=action,
         narrative=llm_outcome.narrative,
-        effects=llm_outcome.effects,
+        effects=computed_effects,   # ✅ store computed values
         character_health=character.current_health,
         enemy_health=llm_outcome.enemy_health or 0,
-        combat_state=llm_outcome.combat_state,   # direct model
-        active_combat=active_combat,
-        enemy_defeated_reward=reward,           # direct model
+        combat_state=llm_outcome.combat_state,
+        active_combat=bool(llm_outcome.active_combat),
+        enemy_defeated_reward=reward,
         suggested_actions=llm_outcome.suggested_actions,
     )
     await turn.insert()
-# ✅ Attach turn to campaign
+
+    # ✅ Attach turn to campaign
     campaign.turns.append(turn.id)
     await campaign.save()
 

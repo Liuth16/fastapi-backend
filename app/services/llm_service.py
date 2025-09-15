@@ -40,7 +40,7 @@ class LLMFreeOutcome(BaseModel):
     )
 
     # Combat state flag
-    active_combat: bool = False
+    active_combat: Optional[bool] = Field(default=False)
 
     # Suggestions
     suggested_actions: List[str] = Field(default_factory=list)
@@ -99,28 +99,39 @@ Combat state (always provided — ignore unless hostility occurs):
 Previous turns:
 {previous}
 
-Rules for combat resolution (ONLY if hostility occurs this turn, or you introduce it):
+Rules for combat resolution:
+
+### Combat continuity
+1. Never start a new combat if the last turn was still active (active_combat = true and enemy.health > 0).
+   - If combat is ongoing, continue it until either the player or enemy reaches 0 health.
+   - Only set active_combat = false once the combat is finished.
 
 ### Combat handling
-1. Always include the field "combat_state".
-   - If **no combat occurs this turn**: set "combat_state": {{}} (empty object).
-   - If **combat occurs or continues**: 
+2. Always include the field "combat_state".
+   - If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
+   - If **combat occurs or continues**:
      - Use the provided combat_state as the base.
-     - Choose ONE relevant attribute for each side.
-       - Example: player_total = roll + dexterity if dodging, roll + intelligence if casting.
-       - Example: enemy_total = roll + strength
-       - Always pick the same relevant attribute for both enemy and player. Example: if the player used dexterity, the enemy will also use dexterity.
-     - Apply the chosen action outcome based on the roll of both player and enemy, highest roll + bonus succeed, and update health values accordingly.
-     - Return the updated "combat_state" object.
+     - Choose ONE relevant attribute for both sides.
+       - Example: player_total = roll + dexterity if dodging.
+       - Example: enemy_total = roll + strength.
+     - Compare totals:
+       - If the player's total > enemy's total → action succeeds: mark an effect of type "damage" with target "enemy".
+       - If the player's total < enemy's total → action fails: mark an effect of type "damage" with target "self".
+       - Ties can be narrated as stalemates (no effect or both minor scratches).
+     - Update "combat_state" with the chosen attributes and totals.
+     - Do NOT invent damage values; just return effect type and target. The backend will calculate the numbers.
 
-2. Effects must use ONLY this format:
-   - {{ "type": "damage" | "heal", "target": "enemy" | "self", "value": <int> }}
+3. Effects must use ONLY this format:
+   - {{ "type": "damage" | "heal", "target": "enemy" | "self" }}
+   - Do NOT include "value". Backend will calculate value.
 
-3. YOU track enemy health. Return updated integer "enemy_health" when combat is present this turn. If no enemy is present, set "enemy_health" to null.
+4. YOU must keep enemy health synchronized:
+   - Always return "enemy_health" as the current integer value from combat_state.enemy.health.
+   - If no enemy is present, set "enemy_health" to null.
 
-4. Deliver rich, immersive narrative responses...
+5. Deliver rich, immersive narrative responses. Narrate success, failure, or ongoing struggle vividly, without mentioning dice, rolls, or mechanics.
 
-5. Always include "enemyDefeatedReward":
+6. Always include "enemyDefeatedReward":
    - If no enemy was defeated: return {{ "gainedExperience": null, "loot": [] }}.
    - If an enemy was defeated: populate with meaningful values.
 
@@ -251,7 +262,7 @@ async def generate_free_narrative(
     *,
     action: str,
     character_name: str,
-    combat_state: dict,          # <-- we stringify for the prompt only
+    combat_state: dict,
     previous_turns: List[str],
 ) -> LLMFreeOutcome:
     contents = FREE_PROMPT_TEMPLATE.format(
@@ -267,7 +278,7 @@ async def generate_free_narrative(
             contents=contents,
             config={
                 "response_mime_type": "application/json",
-                "response_schema": LLMFreeOutcome,  # our strict schema
+                "response_schema": LLMFreeOutcome,
             },
         )
 
@@ -276,42 +287,37 @@ async def generate_free_narrative(
         else:
             out = LLMFreeOutcome(**json.loads(resp.text))
 
-        # ✅ Always normalize enemyDefeatedReward
+        # ✅ Normalize reward
         if out.enemyDefeatedReward is None:
             out.enemyDefeatedReward = EnemyDefeatedReward(
-                gainedExperience=None, loot=[]
-            )
+                gainedExperience=None, loot=[])
 
-        # ✅ Ensure combat_state and active_combat consistency
+        # ✅ Force active_combat to a real bool, even if missing/None
+        out.active_combat = bool(
+            out.active_combat) if out.active_combat is not None else False
+
+        # ✅ Ensure combat_state and enemy_health consistency
         if not out.active_combat:
             out.combat_state = None
             out.enemy_health = None
 
-        # ✅ Ensure suggested_actions is always a list
+        # ✅ Ensure effects omit "value" (if your Effect model still has it floating around)
+        for e in out.effects:
+            if hasattr(e, "value"):
+                e.value = None
+
+        # ✅ Ensure suggestions list
         if out.suggested_actions is None:
             out.suggested_actions = []
 
         return out
 
-    except genai_errors.ServerError as e:
-        logging.error(f"Gemini server error: {e}")
-        return LLMFreeOutcome(
-            narrative="The scene pauses; tension hangs in the air.",
-            effects=[],
-            combat_state={},
-            active_combat=False,
-            enemy_health=None,
-            enemyDefeatedReward=EnemyDefeatedReward(
-                gainedExperience=None, loot=[]
-            ),
-            suggested_actions=[],
-        )
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logging.error(f"Error in generate_free_narrative: {e}")
         return LLMFreeOutcome(
             narrative="You act, but nothing conclusive happens.",
             effects=[],
-            combat_state={},
+            combat_state=None,
             active_combat=False,
             enemy_health=None,
             enemyDefeatedReward=EnemyDefeatedReward(

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import random
 from typing import Dict, Optional
-from app.models import Character
+from app.models import Character, CombatSide
 
 
 def estimate_enemy_baseline(
@@ -34,6 +34,7 @@ def estimate_enemy_baseline(
 
     return {
         "health": enemy_health,
+        "max_health": enemy_health,
         "attributes": enemy_attrs,
     }
 
@@ -64,6 +65,7 @@ def build_combat_state(
         },
         "enemy": {
             "health": int(enemy_state.get("health", 0)),
+            "max_health": int(enemy_state.get("max_health", 0)),
             "attributes": {
                 "strength": int(enemy_state.get("attributes", {}).get("strength", 0)),
                 "dexterity": int(enemy_state.get("attributes", {}).get("dexterity", 0)),
@@ -73,3 +75,13 @@ def build_combat_state(
             "roll": random.randint(1, 20),
         },
     }
+
+
+def calculate_effect_value(attacker: CombatSide, defender: CombatSide) -> int:
+    """
+    Calculate damage/heal value as 15% of the average between attacker and defender max health.
+    """
+    player_max = attacker.max_health or attacker.health
+    enemy_max = defender.max_health or defender.health
+    avg_health = (player_max + enemy_max) / 2
+    return max(1, int(avg_health * 0.15))

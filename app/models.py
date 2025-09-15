@@ -22,7 +22,7 @@ class AttributeSet(BaseModel):
 class Effect(BaseModel):
     type: EffectType
     target: str   # "enemy" or "self"
-    value: int
+    value: Optional[int] = None  # will be computed later
 
 
 class CombatAttributes(BaseModel):
