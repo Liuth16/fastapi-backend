@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import errors as genai_errors
 from app.config import settings  # centralized config
-from app.models import Effect, CombatStateModel, EnemyDefeatedReward
+from app.models import Effect, CombatStateModel, EnemyDefeatedReward, LLMEffect
 
 
 # Initialize Gemini client using settings
@@ -30,7 +30,7 @@ class IntroInit(BaseModel):
 
 class LLMFreeOutcome(BaseModel):
     narrative: str
-    effects: List[Effect] = Field(default_factory=list)
+    effects: List[LLMEffect] = Field(default_factory=list)
     enemy_health: Optional[int] = None  # null/None if no enemy
     combat_state: Optional[CombatStateModel] = None  # {} -> None in schema
     enemyDefeatedReward: EnemyDefeatedReward = Field(
@@ -101,39 +101,37 @@ Previous turns:
 
 Rules for combat resolution:
 
-### Combat continuity
-1. Never start a new combat if the last turn was still active (active_combat = true and enemy.health > 0).
-   - If combat is ongoing, continue it until either the player or enemy reaches 0 health.
-   - Only set active_combat = false once the combat is finished.
-
 ### Combat handling
-2. Always include the field "combat_state".
-   - If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
-   - If **combat occurs or continues**:
-     - Use the provided combat_state as the base.
-     - Choose ONE relevant attribute for both sides.
-       - Example: player_total = roll + dexterity if dodging.
-       - Example: enemy_total = roll + strength.
-     - Compare totals:
-       - If the player's total > enemy's total → action succeeds: mark an effect of type "damage" with target "enemy".
-       - If the player's total < enemy's total → action fails: mark an effect of type "damage" with target "self".
-       - Ties can be narrated as stalemates (no effect or both minor scratches).
-     - Update "combat_state" with the chosen attributes and totals.
-     - Do NOT invent damage values; just return effect type and target. The backend will calculate the numbers.
+1. If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
+2. If **combat occurs or continues**:
+   - Use the provided combat_state as the base.
+   - **Always recalculate rolls each turn.** The "roll" values inside combat_state are re-generated every turn by the backend, and must be used fresh each turn.
+   - Choose ONE relevant attribute for both sides (must be the same attribute for player and enemy).
+     - Example: player_total = player.roll + player.dexterity
+     - Example: enemy_total = enemy.roll + enemy.strength
+   - **Recompute player_total and enemy_total each turn** with the new rolls and chosen attribute. Never reuse totals from previous turns.
+   - Compare totals:
+     - The side with the higher total (player_total vs enemy_total) succeeds.
+     - The side with the lower total suffers the consequence.
+     - Ties can be narrated as stalemates (no effect or both minor scratches).
+   - Update "combat_state" with the chosen attribute and the *newly calculated* totals for this turn.
+   - Do NOT invent damage values; only return the effect type ("damage" or "heal").
 
 3. Effects must use ONLY this format:
-   - {{ "type": "damage" | "heal", "target": "enemy" | "self" }}
-   - Do NOT include "value". Backend will calculate value.
+   - {{ "type": "damage" | "heal" }}
+   - Do NOT include "target" or "value". Backend will calculate those.
 
-4. YOU must keep enemy health synchronized:
-   - Always return "enemy_health" as the current integer value from combat_state.enemy.health.
-   - If no enemy is present, set "enemy_health" to null.
+### Narrative Guidelines
+4a. **Combat Narratives**
+   - Keep them short, direct, and action-focused (1–3 sentences).
+   - Clearly describe the outcome of the clash (attack hits, misses, block, wound, etc.).
+   - Emphasize tension, speed, and consequences rather than scenery or world-building.
 
-5. Deliver rich, immersive narrative responses. Narrate success, failure, or ongoing struggle vividly, without mentioning dice, rolls, or mechanics.
-
-6. Always include "enemyDefeatedReward":
-   - If no enemy was defeated: return {{ "gainedExperience": null, "loot": [] }}.
-   - If an enemy was defeated: populate with meaningful values.
+4b. **Non-Combat Narratives**
+   - Be more detailed, rich, and immersive (3–6 sentences).
+   - Focus on world-building, dialogue, exploration, atmosphere, and social interactions.
+   - Incentivize curiosity, roleplay, and interaction with the environment or NPCs.
+   - Encourage dialogue opportunities and new directions the player might explore.
 
 ### Action Suggestions
 At the end of your response, ALWAYS provide a field "suggested_actions".
@@ -147,6 +145,38 @@ Description: {campaign_description}
 
 Generate the first enemy (name, description, and health 20–50).
 Output JSON strictly matching the schema.
+"""
+
+_PLAYER_KO_PROMPT = """You are the narrator for a freeform RPG.
+
+The player has reached 0 health and has been knocked out.
+
+Rules:
+- Do NOT kill the player.
+- Narrate how the player survives through outside intervention (rescue, unconsciousness, someone finds them, or being spared).
+- Keep it immersive and consistent with the tone of the story.
+- The backend will handle combat state and health resets, so you only need to provide narrative and suggestions.
+
+Output JSON with:
+  - "narrative"
+  - "enemyDefeatedReward": { "gainedExperience": null, "loot": [] }
+  - "suggested_actions" (encourage recovery, regrouping, etc.)
+"""
+
+
+_ENEMY_KO_PROMPT = """You are the narrator for a freeform RPG.
+
+The enemy has reached 0 health and has been defeated.
+
+Rules:
+- Narrate the enemy’s fall or defeat in a vivid way.
+- Provide a meaningful "enemyDefeatedReward" (loot, XP, or both).
+- The backend will handle combat state and health updates, so you only need to provide narrative, rewards, and suggestions.
+
+Output JSON with:
+  - "narrative"
+  - "enemyDefeatedReward"
+  - "suggested_actions" (next steps the player can take)
 """
 
 
@@ -350,4 +380,90 @@ async def generate_enemy_for_level(campaign_name: str, campaign_description: str
             enemy_name="Orc",
             enemy_description="A brutish orc stares you down.",
             enemy_health=40,
+        )
+
+
+async def player_knocked_out() -> LLMFreeOutcome:
+    """Generate narrative when the player is reduced to 0 HP."""
+    try:
+        resp = _client.models.generate_content(
+            model=_MODEL,
+            contents=_PLAYER_KO_PROMPT,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": LLMFreeOutcome,
+            },
+        )
+
+        if getattr(resp, "parsed", None):
+            out: LLMFreeOutcome = resp.parsed
+        else:
+            out = LLMFreeOutcome(**json.loads(resp.text))
+
+        # Always enforce defaults
+        out.active_combat = False
+        out.combat_state = None
+        out.enemy_health = None
+
+        if out.enemyDefeatedReward is None:
+            out.enemyDefeatedReward = EnemyDefeatedReward(
+                gainedExperience=None, loot=[]
+            )
+
+        return out
+
+    except Exception as e:
+        logging.error(f"Error in player_knocked_out: {e}")
+        return LLMFreeOutcome(
+            narrative="You collapse into darkness, but fate spares your life. Someone finds you before it is too late.",
+            effects=[],
+            combat_state=None,
+            active_combat=False,
+            enemy_health=None,
+            enemyDefeatedReward=EnemyDefeatedReward(
+                gainedExperience=None, loot=[]),
+            suggested_actions=["Recover your strength", "Plan your next step"],
+        )
+
+
+async def enemy_knocked_out() -> LLMFreeOutcome:
+    """Generate narrative when the enemy is reduced to 0 HP."""
+    try:
+        resp = _client.models.generate_content(
+            model=_MODEL,
+            contents=_ENEMY_KO_PROMPT,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": LLMFreeOutcome,
+            },
+        )
+
+        if getattr(resp, "parsed", None):
+            out: LLMFreeOutcome = resp.parsed
+        else:
+            out = LLMFreeOutcome(**json.loads(resp.text))
+
+        # Always enforce defaults
+        out.active_combat = False
+        out.combat_state = None
+
+        if out.enemyDefeatedReward is None:
+            out.enemyDefeatedReward = EnemyDefeatedReward(
+                gainedExperience=10, loot=["Gold Coin"]
+            )
+
+        return out
+
+    except Exception as e:
+        logging.error(f"Error in enemy_knocked_out: {e}")
+        return LLMFreeOutcome(
+            narrative="The enemy crumples to the ground, defeated once and for all.",
+            effects=[],
+            combat_state=None,
+            active_combat=False,
+            enemy_health=0,
+            enemyDefeatedReward=EnemyDefeatedReward(
+                gainedExperience=10, loot=["Gold Coin"]
+            ),
+            suggested_actions=["Collect your reward", "Search the area"],
         )

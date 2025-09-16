@@ -21,8 +21,12 @@ class AttributeSet(BaseModel):
 
 class Effect(BaseModel):
     type: EffectType
-    target: str   # "enemy" or "self"
+    target: str
     value: Optional[int] = None  # will be computed later
+
+
+class LLMEffect(BaseModel):
+    type: EffectType
 
 
 class CombatAttributes(BaseModel):

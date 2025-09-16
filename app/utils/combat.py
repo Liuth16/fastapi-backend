@@ -2,7 +2,7 @@
 from __future__ import annotations
 import random
 from typing import Dict, Optional
-from app.models import Character, CombatSide
+from app.models import Character, CombatSide, CombatStateModel, Effect, EffectType
 
 
 def estimate_enemy_baseline(
@@ -77,11 +77,43 @@ def build_combat_state(
     }
 
 
-def calculate_effect_value(attacker: CombatSide, defender: CombatSide) -> int:
+def resolve_effect(effect_type: EffectType, attacker: CombatSide, defender: CombatSide, player_total: int, enemy_total: int) -> Effect:
     """
-    Calculate damage/heal value as 15% of the average between attacker and defender max health.
+    Decide effect target + value based on rolls.
     """
+    # calculate base value
     player_max = attacker.max_health or attacker.health
     enemy_max = defender.max_health or defender.health
     avg_health = (player_max + enemy_max) / 2
-    return max(1, int(avg_health * 0.15))
+    value = max(1, int(avg_health * 0.15))
+
+    # decide target
+    if effect_type == EffectType.DAMAGE:
+        if player_total > enemy_total:
+            return Effect(type=EffectType.DAMAGE, target="enemy", value=value)
+        elif player_total < enemy_total:
+            return Effect(type=EffectType.DAMAGE, target="self", value=value)
+        else:
+            # stalemate/no effect
+            return Effect(type=EffectType.DAMAGE, target="none", value=0)
+
+    elif effect_type == EffectType.HEAL:
+        if player_total > enemy_total:
+            return Effect(type=EffectType.HEAL, target="self", value=value)
+        elif player_total < enemy_total:
+            # backfire: damage instead
+            return Effect(type=EffectType.DAMAGE, target="self", value=value)
+        else:
+            # stalemate/no effect
+            return Effect(type=EffectType.HEAL, target="none", value=0)
+
+    return Effect(type=effect_type, target="none", value=0)
+
+
+def refresh_rolls(combat_state: CombatStateModel) -> CombatStateModel:
+    """
+    Refresh the rolls for both sides in the combat state.
+    """
+    combat_state.player.roll = random.randint(1, 20)
+    combat_state.player.roll = random.randint(1, 20)
+    return combat_state
