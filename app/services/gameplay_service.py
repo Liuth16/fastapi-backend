@@ -137,31 +137,51 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         previous_turns=previous_turns,
     )
 
-    # --- Apply effects (compute + persist)
+    # Helper: read fresh totals from the LLM output (fallback to rolls if missing)
+    def _fresh_totals(cs) -> tuple[int, int]:
+        if not cs:
+            return (0, 0)
+        pt = cs.player_total if cs.player_total is not None else cs.player.roll
+        et = cs.enemy_total if cs.enemy_total is not None else cs.enemy.roll
+        return (int(pt), int(et))
+
+    cs_out = llm_outcome.combat_state  # the LLM-updated combat state
+    p_total, e_total = _fresh_totals(cs_out)
+
+    # --- Apply effects (compute values with fresh totals and persist)
     computed_effects = []
     for effect in llm_outcome.effects:
+        # Use the LLM's combat_state sides + fresh totals
+        attacker = cs_out.player if cs_out else combat_state.player
+        defender = cs_out.enemy if cs_out else combat_state.enemy
+
         resolved = resolve_effect(
             effect_type=effect.type,
-            attacker=combat_state.player,
-            defender=combat_state.enemy,
-            player_total=combat_state.player_total or 0,
-            enemy_total=combat_state.enemy_total or 0,
+            attacker=attacker,
+            defender=defender,
+            player_total=p_total,
+            enemy_total=e_total,
         )
+
+        # Skip true stalemates ("none" target or zero value)
+        if resolved.target == "none" or (resolved.value or 0) <= 0:
+            continue
+
         # Apply to player
         if resolved.target == "self":
             character.current_health = max(
                 0,
                 min(
                     character.max_health,
-                    character.current_health
-                    + (resolved.value if resolved.type ==
-                       EffectType.HEAL else -resolved.value),
+                    character.current_health +
+                    (resolved.value if resolved.type ==
+                     EffectType.HEAL else -resolved.value),
                 ),
             )
-        # Apply to enemy
-        elif resolved.target == "enemy" and llm_outcome.combat_state:
-            enemy = llm_outcome.combat_state.enemy
-            if resolved.type == EffectType.HEAL and enemy.max_health:
+        # Apply to enemy (apply to the LLM state we will store)
+        elif resolved.target == "enemy" and cs_out:
+            enemy = cs_out.enemy
+            if resolved.type == EffectType.HEAL and enemy.max_health is not None:
                 enemy.health = min(
                     enemy.max_health, enemy.health + resolved.value)
             elif resolved.type == EffectType.DAMAGE:
@@ -171,21 +191,20 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     await character.save()
 
-    # --- Clamp enemy health
-    if llm_outcome.combat_state:
-        enemy = llm_outcome.combat_state.enemy
-        if enemy.max_health is not None:
-            enemy.health = max(0, min(enemy.max_health, enemy.health))
+    # --- Clamp enemy health (post-application)
+    if cs_out and cs_out.enemy.max_health is not None:
+        cs_out.enemy.health = max(
+            0, min(cs_out.enemy.max_health, cs_out.enemy.health))
 
     # --- Check for knockouts
     if character.current_health <= 0:
-        # reset player and end combat
         character.current_health = character.max_health
         await character.save()
         llm_outcome = await player_knocked_out()
-
-    elif llm_outcome.combat_state and llm_outcome.combat_state.enemy.health <= 0:
+        cs_out = llm_outcome.combat_state  # may be None after KO
+    elif cs_out and cs_out.enemy.health <= 0:
         llm_outcome = await enemy_knocked_out()
+        cs_out = llm_outcome.combat_state
 
     # --- Normalize reward
     if isinstance(llm_outcome.enemyDefeatedReward, EnemyDefeatedReward):
@@ -195,16 +214,21 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     else:
         reward = EnemyDefeatedReward(gainedExperience=None, loot=[])
 
-    # --- Save turn
+    # Compute active_combat AFTER applying effects
+    active_combat = bool(
+        cs_out and character.current_health > 0 and cs_out.enemy.health > 0
+    )
+
+    # --- Save turn (use the post-application enemy health)
     turn = Turn(
         turn_number=len(campaign.turns) + 1,
         user_input=action,
         narrative=llm_outcome.narrative,
         effects=computed_effects,
         character_health=character.current_health,
-        enemy_health=llm_outcome.enemy_health or 0,
-        combat_state=llm_outcome.combat_state,
-        active_combat=bool(llm_outcome.active_combat),
+        enemy_health=(cs_out.enemy.health if cs_out else 0),
+        combat_state=cs_out,
+        active_combat=active_combat,
         enemy_defeated_reward=reward,
         suggested_actions=llm_outcome.suggested_actions,
     )
