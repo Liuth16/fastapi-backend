@@ -3,6 +3,7 @@ import random
 from app.models import Campaign, Character, Turn, Effect, EffectType, EnemyDefeatedReward, CombatStateModel, Level
 from app.services.llm_service import generate_narrative_with_schema, generate_free_narrative, player_knocked_out, enemy_knocked_out
 from app.utils.combat import build_combat_state, resolve_effect, refresh_rolls
+from app.utils.cheats import cheat_set_player_health_to_one, cheat_set_enemy_health_to_one
 
 
 async def process_player_action(campaign: Campaign, action: str, character: Character):
@@ -92,6 +93,35 @@ async def process_player_action(campaign: Campaign, action: str, character: Char
 
 
 async def process_free_action(campaign: Campaign, action: str, character: Character):
+
+    if action.strip().lower() == "reducemylife":
+        await cheat_set_player_health_to_one(campaign, character)
+        return {
+            "narrative": "Cheat activated: player health set to 1.",
+            "effects": [],
+            "character_health": 1,
+            "enemy_health": None,
+            "combat_state": None,
+            "active_combat": False,
+            "enemy_defeated_reward": {"gainedExperience": None, "loot": []},
+            "turn_number": len(campaign.turns),
+            "suggested_actions": [],
+        }
+
+    if action.strip().lower() == "reduceenemylife":
+        await cheat_set_enemy_health_to_one(campaign)
+        return {
+            "narrative": "Cheat activated: enemy health set to 1.",
+            "effects": [],
+            "character_health": character.current_health,
+            "enemy_health": 1,
+            "combat_state": None,
+            "active_combat": False,
+            "enemy_defeated_reward": {"gainedExperience": None, "loot": []},
+            "turn_number": len(campaign.turns),
+            "suggested_actions": [],
+        }
+
     previous_turns = []
     last_combat_state = None
 
