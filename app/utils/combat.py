@@ -115,5 +115,5 @@ def refresh_rolls(combat_state: CombatStateModel) -> CombatStateModel:
     Refresh the rolls for both sides in the combat state.
     """
     combat_state.player.roll = random.randint(1, 20)
-    combat_state.player.roll = random.randint(1, 20)
+    combat_state.enemy.roll = random.randint(1, 20)
     return combat_state

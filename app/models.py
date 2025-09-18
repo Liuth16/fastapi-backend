@@ -77,6 +77,9 @@ class EnemyDefeatedReward(BaseModel):
     gainedExperience: Optional[int] = None
     loot: List[str] = Field(default_factory=list)
 
+    class Config:
+        populate_by_name = True
+
 # ---------- TURN ----------
 
 

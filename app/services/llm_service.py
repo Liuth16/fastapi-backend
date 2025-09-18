@@ -33,10 +33,10 @@ class LLMFreeOutcome(BaseModel):
     effects: List[LLMEffect] = Field(default_factory=list)
     enemy_health: Optional[int] = None  # null/None if no enemy
     combat_state: Optional[CombatStateModel] = None  # {} -> None in schema
-    enemyDefeatedReward: EnemyDefeatedReward = Field(
+    enemy_defeated_reward: EnemyDefeatedReward = Field(
         default_factory=lambda: EnemyDefeatedReward(
-            gainedExperience=None, loot=[]
-        )
+            gainedExperience=None, loot=[]),
+        alias="enemyDefeatedReward"
     )
 
     # Combat state flag
@@ -44,6 +44,9 @@ class LLMFreeOutcome(BaseModel):
 
     # Suggestions
     suggested_actions: List[str] = Field(default_factory=list)
+
+    class Config:
+        populate_by_name = True
 
 
 class EnemyInit(BaseModel):
@@ -120,6 +123,7 @@ Rules for combat resolution:
 3. Effects must use ONLY this format:
    - {{ "type": "damage" | "heal" }}
    - Do NOT include "target" or "value". Backend will calculate those.
+   Do not change numeric health values in combat_state. Only narrate effects and provide effects objects. The backend will compute and update health.
 
 ### Narrative Guidelines
 4a. **Combat Narratives**
@@ -151,16 +155,17 @@ _PLAYER_KO_PROMPT = """You are the narrator for a freeform RPG.
 
 The player has reached 0 health and has been knocked out.
 
+Context:
+- Past turns so far:
+{previous_turns}
+
 Rules:
 - Do NOT kill the player.
 - Narrate how the player survives through outside intervention (rescue, unconsciousness, someone finds them, or being spared).
-- Keep it immersive and consistent with the tone of the story.
+- Keep it immersive and consistent with the tone of the past turns.
+- Your narration must feel like the natural continuation of the story.
 - The backend will handle combat state and health resets, so you only need to provide narrative and suggestions.
 
-Output JSON with:
-  - "narrative"
-  - "enemyDefeatedReward": { "gainedExperience": null, "loot": [] }
-  - "suggested_actions" (encourage recovery, regrouping, etc.)
 """
 
 
@@ -168,15 +173,16 @@ _ENEMY_KO_PROMPT = """You are the narrator for a freeform RPG.
 
 The enemy has reached 0 health and has been defeated.
 
+Context:
+- Past turns so far:
+{previous_turns}
+
 Rules:
 - Narrate the enemy’s fall or defeat in a vivid way.
-- Provide a meaningful "enemyDefeatedReward" (loot, XP, or both).
+- Ensure the description matches the tone and events of the past turns.
+- Provide a meaningful "enemy_defeated_reward" (loot, XP, or both) that makes sense with the context.
 - The backend will handle combat state and health updates, so you only need to provide narrative, rewards, and suggestions.
 
-Output JSON with:
-  - "narrative"
-  - "enemyDefeatedReward"
-  - "suggested_actions" (next steps the player can take)
 """
 
 
@@ -271,6 +277,8 @@ Campaign description: {campaign_description}
 Character: {character_name}
 
 Write an engaging introductory narrative (2–3 sentences).
+The narrative should set the scene, introduce the character, and hint at potential adventures ahead.
+Keep the introductory narrative in the same language of the campaign description (Either English or Portuguese Brazil).
 Output JSON with field "narrative".
 """
     try:
@@ -318,8 +326,8 @@ async def generate_free_narrative(
             out = LLMFreeOutcome(**json.loads(resp.text))
 
         # ✅ Normalize reward
-        if out.enemyDefeatedReward is None:
-            out.enemyDefeatedReward = EnemyDefeatedReward(
+        if out.enemy_defeated_reward is None:
+            out.enemy_defeated_reward = EnemyDefeatedReward(
                 gainedExperience=None, loot=[])
 
         # ✅ Force active_combat to a real bool, even if missing/None
@@ -350,7 +358,7 @@ async def generate_free_narrative(
             combat_state=None,
             active_combat=False,
             enemy_health=None,
-            enemyDefeatedReward=EnemyDefeatedReward(
+            enemy_defeated_reward=EnemyDefeatedReward(
                 gainedExperience=None, loot=[]
             ),
             suggested_actions=[],
@@ -383,12 +391,13 @@ async def generate_enemy_for_level(campaign_name: str, campaign_description: str
         )
 
 
-async def player_knocked_out() -> LLMFreeOutcome:
+async def player_knocked_out(previous_turns: list[str]) -> LLMFreeOutcome:
     """Generate narrative when the player is reduced to 0 HP."""
     try:
         resp = _client.models.generate_content(
             model=_MODEL,
-            contents=_PLAYER_KO_PROMPT,
+            contents=_PLAYER_KO_PROMPT.format(
+                previous_turns="\n".join(previous_turns)),
             config={
                 "response_mime_type": "application/json",
                 "response_schema": LLMFreeOutcome,
@@ -405,8 +414,8 @@ async def player_knocked_out() -> LLMFreeOutcome:
         out.combat_state = None
         out.enemy_health = None
 
-        if out.enemyDefeatedReward is None:
-            out.enemyDefeatedReward = EnemyDefeatedReward(
+        if out.enemy_defeated_reward is None:
+            out.enemy_defeated_reward = EnemyDefeatedReward(
                 gainedExperience=None, loot=[]
             )
 
@@ -420,18 +429,20 @@ async def player_knocked_out() -> LLMFreeOutcome:
             combat_state=None,
             active_combat=False,
             enemy_health=None,
-            enemyDefeatedReward=EnemyDefeatedReward(
-                gainedExperience=None, loot=[]),
+            enemy_defeated_reward=EnemyDefeatedReward(
+                gainedExperience=None, loot=[]
+            ),
             suggested_actions=["Recover your strength", "Plan your next step"],
         )
 
 
-async def enemy_knocked_out() -> LLMFreeOutcome:
+async def enemy_knocked_out(previous_turns: list[str]) -> LLMFreeOutcome:
     """Generate narrative when the enemy is reduced to 0 HP."""
     try:
         resp = _client.models.generate_content(
             model=_MODEL,
-            contents=_ENEMY_KO_PROMPT,
+            contents=_ENEMY_KO_PROMPT.format(
+                previous_turns="\n".join(previous_turns)),
             config={
                 "response_mime_type": "application/json",
                 "response_schema": LLMFreeOutcome,
@@ -447,8 +458,8 @@ async def enemy_knocked_out() -> LLMFreeOutcome:
         out.active_combat = False
         out.combat_state = None
 
-        if out.enemyDefeatedReward is None:
-            out.enemyDefeatedReward = EnemyDefeatedReward(
+        if out.enemy_defeated_reward is None:
+            out.enemy_defeated_reward = EnemyDefeatedReward(
                 gainedExperience=10, loot=["Gold Coin"]
             )
 
@@ -462,7 +473,7 @@ async def enemy_knocked_out() -> LLMFreeOutcome:
             combat_state=None,
             active_combat=False,
             enemy_health=0,
-            enemyDefeatedReward=EnemyDefeatedReward(
+            enemy_defeated_reward=EnemyDefeatedReward(
                 gainedExperience=10, loot=["Gold Coin"]
             ),
             suggested_actions=["Collect your reward", "Search the area"],

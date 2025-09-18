@@ -96,27 +96,29 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     if action.strip().lower() == "reducemylife":
         await cheat_set_player_health_to_one(campaign, character)
-        # safely get enemy health if possible
+    # Safely read enemy health from the last turn (prefer combat_state, fallback to flat field)
         enemy_health = 0
         if campaign.turns:
-            last_turn = await Turn.get(campaign.turns[-1])
-            if last_turn and last_turn.combat_state:
-                if isinstance(last_turn.combat_state, dict):
-                    enemy_health = last_turn.combat_state.get(
-                        "enemy", {}).get("health", 0)
-                elif isinstance(last_turn.combat_state, CombatStateModel):
-                    enemy_health = last_turn.combat_state.enemy.health
+            lt = await Turn.get(campaign.turns[-1])
+            if lt:
+                if lt.combat_state:
+                    if isinstance(lt.combat_state, dict):
+                        enemy_health = int(lt.combat_state.get(
+                            "enemy", {}).get("health", lt.enemy_health or 0))
+                    else:  # CombatStateModel
+                        enemy_health = int(lt.combat_state.enemy.health)
+                else:
+                    enemy_health = int(lt.enemy_health or 0)
 
         return FreeActionOut(
             narrative="Cheat activated: player health set to 1.",
             effects=[],
             character_health=1,
-            enemy_health=enemy_health,
+            enemy_health=enemy_health,  # <- preserve enemy HP
             combat_state=None,
             active_combat=False,
             enemy_defeated_reward=EnemyDefeatedReward(
-                gainedExperience=None, loot=[]
-            ),
+                gainedExperience=None, loot=[]),
             turn_number=len(campaign.turns),
             suggested_actions=[],
         )
@@ -174,6 +176,8 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     combat_state = refresh_rolls(combat_state)
 
+    print("Combat State Sent to LLM:", combat_state)
+
     # --- Send to LLM
     llm_outcome = await generate_free_narrative(
         action=action,
@@ -181,6 +185,8 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         combat_state=combat_state.model_dump(),
         previous_turns=previous_turns,
     )
+
+    print("LLM Outcome:", llm_outcome.combat_state)
 
     # Helper: read fresh totals from the LLM output (fallback to rolls if missing)
     def _fresh_totals(cs) -> tuple[int, int]:
@@ -193,48 +199,48 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     cs_out = llm_outcome.combat_state  # the LLM-updated combat state
     p_total, e_total = _fresh_totals(cs_out)
 
-    # --- Apply effects (compute values with fresh totals and persist)
+    # --- Apply effects using backend as source of truth
     computed_effects = []
-    for effect in llm_outcome.effects:
-        # Use the LLM's combat_state sides + fresh totals
-        attacker = cs_out.player if cs_out else combat_state.player
-        defender = cs_out.enemy if cs_out else combat_state.enemy
+    player_hp = character.current_health
+    enemy_hp = combat_state.enemy.health  # <- baseline from backend
 
+    for effect in llm_outcome.effects:
         resolved = resolve_effect(
             effect_type=effect.type,
-            attacker=attacker,
-            defender=defender,
+            attacker=combat_state.player,
+            defender=combat_state.enemy,
             player_total=p_total,
             enemy_total=e_total,
         )
 
-        # Skip true stalemates ("none" target or zero value)
         if resolved.target == "none" or (resolved.value or 0) <= 0:
             continue
 
-        # Apply to player
         if resolved.target == "self":
-            character.current_health = max(
+            player_hp = max(
                 0,
                 min(
                     character.max_health,
-                    character.current_health +
-                    (resolved.value if resolved.type ==
-                     EffectType.HEAL else -resolved.value),
+                    player_hp + (resolved.value if resolved.type ==
+                                 EffectType.HEAL else -resolved.value),
                 ),
             )
-        # Apply to enemy (apply to the LLM state we will store)
-        elif resolved.target == "enemy" and cs_out:
-            enemy = cs_out.enemy
-            if resolved.type == EffectType.HEAL and enemy.max_health is not None:
-                enemy.health = min(
-                    enemy.max_health, enemy.health + resolved.value)
+        elif resolved.target == "enemy":
+            if resolved.type == EffectType.HEAL:
+                enemy_hp = min(combat_state.enemy.max_health,
+                               enemy_hp + resolved.value)
             elif resolved.type == EffectType.DAMAGE:
-                enemy.health = max(0, enemy.health - resolved.value)
+                enemy_hp = max(0, enemy_hp - resolved.value)
 
         computed_effects.append(resolved)
 
+    # Commit updates back
+    character.current_health = player_hp
     await character.save()
+
+    combat_state.enemy.health = enemy_hp
+    if cs_out:
+        cs_out.enemy.health = enemy_hp
 
     # --- Clamp enemy health (post-application)
     if cs_out and cs_out.enemy.max_health is not None:
@@ -245,17 +251,17 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     if character.current_health <= 0:
         character.current_health = character.max_health
         await character.save()
-        llm_outcome = await player_knocked_out()
+        llm_outcome = await player_knocked_out(previous_turns)
         cs_out = llm_outcome.combat_state  # may be None after KO
     elif cs_out and cs_out.enemy.health <= 0:
-        llm_outcome = await enemy_knocked_out()
+        llm_outcome = await enemy_knocked_out(previous_turns)
         cs_out = llm_outcome.combat_state
 
     # --- Normalize reward
-    if isinstance(llm_outcome.enemyDefeatedReward, EnemyDefeatedReward):
-        reward = llm_outcome.enemyDefeatedReward
-    elif isinstance(llm_outcome.enemyDefeatedReward, dict):
-        reward = EnemyDefeatedReward(**llm_outcome.enemyDefeatedReward)
+    if isinstance(llm_outcome.enemy_defeated_reward, EnemyDefeatedReward):
+        reward = llm_outcome.enemy_defeated_reward
+    elif isinstance(llm_outcome.enemy_defeated_reward, dict):
+        reward = EnemyDefeatedReward(**llm_outcome.enemy_defeated_reward)
     else:
         reward = EnemyDefeatedReward(gainedExperience=None, loot=[])
 
