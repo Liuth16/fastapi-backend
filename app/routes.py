@@ -15,7 +15,8 @@ from .models import (
     Effect, EffectType,
     AttributeSet,
     CampaignSummary,
-    CampaignMode
+    CampaignMode,
+    FreeActionOut,
 )
 from .auth import hash_password, verify_password, create_access_token, get_current_user
 
@@ -255,7 +256,7 @@ async def get_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
     return CampaignOut.model_validate(campaign)
 
 
-@router.post("/api/campanha/{campaign_id}/acao")
+@router.post("/api/campanha/{campaign_id}/acao", response_model=FreeActionOut)
 async def campaign_action(
     campaign_id: PydanticObjectId,
     action: str,

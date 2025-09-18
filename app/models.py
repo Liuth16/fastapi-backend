@@ -36,6 +36,13 @@ class CombatAttributes(BaseModel):
     charisma: int
 
 
+class CombatAttributesOut(BaseModel):
+    strength: int
+    dexterity: int
+    intelligence: int
+    charisma: int
+
+
 class CombatSide(BaseModel):
     health: int
     max_health: Optional[int] = None
@@ -43,9 +50,24 @@ class CombatSide(BaseModel):
     roll: int
 
 
+class CombatSideOut(BaseModel):
+    health: int
+    max_health: Optional[int] = None
+    attributes: CombatAttributesOut
+    roll: int
+
+
 class CombatStateModel(BaseModel):
     player: CombatSide
     enemy: CombatSide
+    chosen_attribute: Optional[str] = None
+    player_total: Optional[int] = None
+    enemy_total: Optional[int] = None
+
+
+class CombatStateOut(BaseModel):
+    player: CombatSideOut
+    enemy: CombatSideOut
     chosen_attribute: Optional[str] = None
     player_total: Optional[int] = None
     enemy_total: Optional[int] = None
@@ -177,7 +199,20 @@ class CampaignOut(BaseModel):
         from_attributes = True
 
 
+class FreeActionOut(BaseModel):
+    narrative: str
+    effects: List[Effect]
+    character_health: int
+    enemy_health: int
+    combat_state: Optional[CombatStateOut] = None
+    active_combat: bool
+    enemy_defeated_reward: EnemyDefeatedReward
+    turn_number: int
+    suggested_actions: List[str]
+
 # ---------- CHARACTER ----------
+
+
 class Character(Document):
     name: str
     race: str

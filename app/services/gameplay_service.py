@@ -1,6 +1,6 @@
 # app/services/gameplay_service.py
 import random
-from app.models import Campaign, Character, Turn, Effect, EffectType, EnemyDefeatedReward, CombatStateModel, Level
+from app.models import Campaign, Character, Turn, Effect, EffectType, EnemyDefeatedReward, CombatStateModel, Level, FreeActionOut, CombatStateOut
 from app.services.llm_service import generate_narrative_with_schema, generate_free_narrative, player_knocked_out, enemy_knocked_out
 from app.utils.combat import build_combat_state, resolve_effect, refresh_rolls
 from app.utils.cheats import cheat_set_player_health_to_one, cheat_set_enemy_health_to_one
@@ -96,31 +96,46 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     if action.strip().lower() == "reducemylife":
         await cheat_set_player_health_to_one(campaign, character)
-        return {
-            "narrative": "Cheat activated: player health set to 1.",
-            "effects": [],
-            "character_health": 1,
-            "enemy_health": None,
-            "combat_state": None,
-            "active_combat": False,
-            "enemy_defeated_reward": {"gainedExperience": None, "loot": []},
-            "turn_number": len(campaign.turns),
-            "suggested_actions": [],
-        }
+        # safely get enemy health if possible
+        enemy_health = 0
+        if campaign.turns:
+            last_turn = await Turn.get(campaign.turns[-1])
+            if last_turn and last_turn.combat_state:
+                if isinstance(last_turn.combat_state, dict):
+                    enemy_health = last_turn.combat_state.get(
+                        "enemy", {}).get("health", 0)
+                elif isinstance(last_turn.combat_state, CombatStateModel):
+                    enemy_health = last_turn.combat_state.enemy.health
+
+        return FreeActionOut(
+            narrative="Cheat activated: player health set to 1.",
+            effects=[],
+            character_health=1,
+            enemy_health=enemy_health,
+            combat_state=None,
+            active_combat=False,
+            enemy_defeated_reward=EnemyDefeatedReward(
+                gainedExperience=None, loot=[]
+            ),
+            turn_number=len(campaign.turns),
+            suggested_actions=[],
+        )
 
     if action.strip().lower() == "reduceenemylife":
         await cheat_set_enemy_health_to_one(campaign)
-        return {
-            "narrative": "Cheat activated: enemy health set to 1.",
-            "effects": [],
-            "character_health": character.current_health,
-            "enemy_health": 1,
-            "combat_state": None,
-            "active_combat": False,
-            "enemy_defeated_reward": {"gainedExperience": None, "loot": []},
-            "turn_number": len(campaign.turns),
-            "suggested_actions": [],
-        }
+        return FreeActionOut(
+            narrative="Cheat activated: enemy health set to 1.",
+            effects=[],
+            character_health=character.current_health,
+            enemy_health=1,
+            combat_state=None,
+            active_combat=False,
+            enemy_defeated_reward=EnemyDefeatedReward(
+                gainedExperience=None, loot=[]
+            ),
+            turn_number=len(campaign.turns),
+            suggested_actions=[],
+        )
 
     previous_turns = []
     last_combat_state = None
@@ -268,14 +283,16 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     campaign.turns.append(turn.id)
     await campaign.save()
 
-    return {
-        "narrative": turn.narrative,
-        "effects": [e.dict() for e in turn.effects],
-        "character_health": turn.character_health,
-        "enemy_health": turn.enemy_health,
-        "combat_state": turn.combat_state.model_dump() if turn.combat_state else None,
-        "active_combat": turn.active_combat,
-        "enemy_defeated_reward": turn.enemy_defeated_reward.model_dump(),
-        "turn_number": turn.turn_number,
-        "suggested_actions": turn.suggested_actions,
-    }
+    return FreeActionOut(
+        narrative=turn.narrative,
+        effects=turn.effects,
+        character_health=turn.character_health,
+        enemy_health=turn.enemy_health,
+        combat_state=CombatStateOut.model_validate(
+            turn.combat_state.model_dump()
+        ) if turn.combat_state else None,
+        active_combat=turn.active_combat,
+        enemy_defeated_reward=turn.enemy_defeated_reward,
+        turn_number=turn.turn_number,
+        suggested_actions=turn.suggested_actions,
+    )
