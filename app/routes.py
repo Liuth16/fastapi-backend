@@ -17,6 +17,9 @@ from .models import (
     CampaignSummary,
     CampaignMode,
     FreeActionOut,
+    EndCampaignOut,
+    CampaignHistoryOut,
+    ClearHistoryOut
 )
 from .auth import hash_password, verify_password, create_access_token, get_current_user
 
@@ -280,7 +283,7 @@ async def campaign_action(
     return result
 
 
-@router.delete("/api/campanha/{campaign_id}")
+@router.delete("/api/campanha/{campaign_id}", response_model=EndCampaignOut)
 async def end_campaign(campaign_id: PydanticObjectId, current_user: User = Depends(get_current_user)):
     campaign = await Campaign.get(campaign_id)
     if not campaign:
@@ -300,12 +303,12 @@ async def end_campaign(campaign_id: PydanticObjectId, current_user: User = Depen
     character.current_campaign_id = None
     await character.save()
 
-    return {"message": "Campaign ended"}
+    return EndCampaignOut(message="Campaign ended")
 
 # ---------------------- HISTORY ----------------------
 
 
-@router.get("/api/historico/{campaign_id}")
+@router.get("/api/historico/{campaign_id}", response_model=CampaignHistoryOut)
 async def get_history(
     campaign_id: PydanticObjectId,
     current_user: User = Depends(get_current_user)
@@ -351,20 +354,19 @@ async def get_history(
     elif campaign.mode == CampaignMode.FREE:
         turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
 
-        return {
-            "campaign_id": str(campaign.id),
-            "campaign_name": campaign.campaign_name,
-            "mode": campaign.mode,
-            "character_health": character.current_health,
-            "character_max_health": character.max_health,
-            "turns": [TurnOut.model_validate(t) for t in turns],
-        }
-
+        return CampaignHistoryOut(
+            campaign_id=str(campaign.id),
+            campaign_name=campaign.campaign_name,
+            mode=campaign.mode,
+            character_health=character.current_health,
+            character_max_health=character.max_health,
+            turns=[TurnOut.model_validate(t) for t in turns],
+        )
     else:
         raise HTTPException(status_code=400, detail="Unknown campaign mode")
 
 
-@router.delete("/api/historico/{campaign_id}")
+@router.delete("/api/historico/{campaign_id}", response_model=ClearHistoryOut)
 async def clear_history(
     campaign_id: PydanticObjectId,
     current_user: User = Depends(get_current_user)
@@ -408,4 +410,4 @@ async def clear_history(
     # Finally delete the campaign
     await campaign.delete()
 
-    return {"message": "Campaign and its history have been permanently deleted"}
+    return ClearHistoryOut(message="Campaign and its history have been permanently deleted")

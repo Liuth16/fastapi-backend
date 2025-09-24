@@ -152,6 +152,7 @@ class LevelOut(BaseModel):
     enemy_health: int
     enemy_max_health: int          # NEW
     is_completed: bool
+    turns: List[TurnOut]
 
     class Config:
         from_attributes = True
@@ -212,6 +213,26 @@ class FreeActionOut(BaseModel):
     enemy_defeated_reward: EnemyDefeatedReward
     turn_number: int
     suggested_actions: List[str]
+
+
+class EndCampaignOut(BaseModel):
+    message: str = "Campaign ended"
+
+
+class CampaignHistoryOut(BaseModel):
+    campaign_id: str
+    campaign_name: str
+    mode: CampaignMode
+    character_health: int
+    character_max_health: int
+    turns: List[TurnOut]
+    turns: Optional[List[TurnOut]] = None
+    levels: Optional[List[LevelOut]] = None
+
+
+class ClearHistoryOut(BaseModel):
+    message: str = "Campaign and its history have been permanently deleted"
+
 
 # ---------- CHARACTER ----------
 
