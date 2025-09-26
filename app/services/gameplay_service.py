@@ -234,18 +234,27 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
         computed_effects.append(resolved)
 
-    # Commit updates back
+ # --- Commit updates back (source of truth = computed player_hp/enemy_hp)
     character.current_health = player_hp
     await character.save()
 
+    # Sync into the backend combat_state we sent to the LLM
+    combat_state.player.health = player_hp
     combat_state.enemy.health = enemy_hp
+
+    # And sync into the LLM-returned combat state we'll persist on the Turn
     if cs_out:
+        cs_out.player.health = player_hp
         cs_out.enemy.health = enemy_hp
 
-    # --- Clamp enemy health (post-application)
-    if cs_out and cs_out.enemy.max_health is not None:
-        cs_out.enemy.health = max(
-            0, min(cs_out.enemy.max_health, cs_out.enemy.health))
+    # --- Clamp both sides in the final state we'll store
+    if cs_out:
+        if cs_out.player.max_health is not None:
+            cs_out.player.health = max(
+                0, min(cs_out.player.max_health, cs_out.player.health))
+        if cs_out.enemy.max_health is not None:
+            cs_out.enemy.health = max(
+                0, min(cs_out.enemy.max_health, cs_out.enemy.health))
 
     # --- Check for knockouts
     if character.current_health <= 0:
