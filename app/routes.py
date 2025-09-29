@@ -7,7 +7,7 @@ from app.services.llm_service import (
     generate_intro_narrative, generate_enemy_for_level, generate_free_narrative, generate_free_intro)
 
 from .models import (
-    User, UserOut,
+    DeleteCharacterOut, User, UserOut,
     Character, CharacterOut,
     Campaign, CampaignOut,
     Level, LevelOut,
@@ -86,6 +86,56 @@ async def create_character(
     await current_user.save()
 
     return CharacterOut.model_validate(character)
+
+
+@router.delete("/api/personagem/{char_id}", response_model=DeleteCharacterOut)
+async def delete_character(
+    char_id: PydanticObjectId,
+    current_user: User = Depends(get_current_user),
+):
+    character = await Character.get(char_id)
+    if not character or str(character.user_id) != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    # Collect all related campaigns (current + past)
+    campaign_ids = []
+    if character.current_campaign_id:
+        campaign_ids.append(character.current_campaign_id)
+    if character.past_campaign_ids:
+        campaign_ids.extend(character.past_campaign_ids)
+
+    # Delete all campaigns and their turns/levels
+    for camp_id in campaign_ids:
+        campaign = await Campaign.get(camp_id)
+        if not campaign:
+            continue
+
+        # --- STANDARD MODE ---
+        if campaign.mode == CampaignMode.STANDARD:
+            for level_id in campaign.levels:
+                level = await Level.get(level_id)
+                if not level:
+                    continue
+                if level.turns:
+                    await Turn.find({"_id": {"$in": level.turns}}).delete()
+                await level.delete()
+
+        # --- FREE MODE ---
+        elif campaign.mode == CampaignMode.FREE:
+            if campaign.turns:
+                await Turn.find({"_id": {"$in": campaign.turns}}).delete()
+
+        await campaign.delete()
+
+    # Remove character from user
+    if char_id in current_user.characters:
+        current_user.characters.remove(char_id)
+        await current_user.save()
+
+    # Finally delete the character itself
+    await character.delete()
+
+    return DeleteCharacterOut(message="Character and all related campaigns have been deleted")
 
 
 @router.get("/api/personagem", response_model=List[CharacterOut])

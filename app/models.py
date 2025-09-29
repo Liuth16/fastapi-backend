@@ -278,6 +278,10 @@ class CharacterOut(BaseModel):
         from_attributes = True
 
 
+class DeleteCharacterOut(BaseModel):
+    message: str
+
+
 # ---------- USER ----------
 class User(Document):
     name: str
