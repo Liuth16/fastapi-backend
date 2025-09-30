@@ -4,6 +4,8 @@ from app.models import Campaign, Character, Turn, Effect, EffectType, EnemyDefea
 from app.services.llm_service import generate_narrative_with_schema, generate_free_narrative, player_knocked_out, enemy_knocked_out
 from app.utils.combat import build_combat_state, resolve_effect, refresh_rolls
 from app.utils.cheats import cheat_set_player_health_to_one, cheat_set_enemy_health_to_one
+from app.chromadb.insert import insert_turn
+from app.chromadb.query import query_turns
 
 
 async def process_player_action(campaign: Campaign, action: str, character: Character):
@@ -142,27 +144,44 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     previous_turns = []
     last_combat_state = None
 
+    # 1. Get last 5 turns for continuity
+    recent_turns = []
     if campaign.turns:
-        turns = await Turn.find({"_id": {"$in": campaign.turns}}).to_list()
+        turns = (
+            await Turn.find({"_id": {"$in": campaign.turns}})
+            .sort([("turn_number", -1)])   # ✅ Beanie expects a list of tuples
+            .limit(5)
+            .to_list()
+        )
+        turns = list(reversed(turns))  # keep chronological order
         for t in turns:
-            previous_turns.append(
-                f"Player: {t.user_input} | Narrative: {t.narrative}"
-            )
-        last_turn = turns[-1]
+            recent_turns.append(
+                f"Player: {t.user_input} | Narrator: {t.narrative}")
+        last_turn = turns[-1] if turns else None
+    else:
+        last_turn = None
 
-        # --- handle combat_state being dict (DB) or model (LLM)
-        if last_turn.combat_state:
-            if isinstance(last_turn.combat_state, dict):
-                player_health = last_turn.combat_state.get(
-                    "player", {}).get("health", 0)
-                enemy_health = last_turn.combat_state.get(
-                    "enemy", {}).get("health", 0)
-            else:  # CombatStateModel
-                player_health = last_turn.combat_state.player.health
-                enemy_health = last_turn.combat_state.enemy.health
+    # 2. Query ChromaDB for relevant past turns
+    relevant_turns = await query_turns(action, str(campaign.id), k=3)
 
-            if player_health > 0 and enemy_health > 0 and last_turn.active_combat:
-                last_combat_state = last_turn.combat_state
+    # 3. Merge them
+    previous_turns = recent_turns + relevant_turns
+
+    print(previous_turns)
+
+    # --- handle combat_state being dict (DB) or model (LLM)
+    if last_turn.combat_state:
+        if isinstance(last_turn.combat_state, dict):
+            player_health = last_turn.combat_state.get(
+                "player", {}).get("health", 0)
+            enemy_health = last_turn.combat_state.get(
+                "enemy", {}).get("health", 0)
+        else:  # CombatStateModel
+            player_health = last_turn.combat_state.player.health
+            enemy_health = last_turn.combat_state.enemy.health
+
+        if player_health > 0 and enemy_health > 0 and last_turn.active_combat:
+            last_combat_state = last_turn.combat_state
 
     # --- scaffold or continue
     if last_combat_state:
@@ -296,6 +315,10 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     # ✅ Attach turn to campaign
     campaign.turns.append(turn.id)
+
+    # Store this turn in vector DB for future retrieval
+    await insert_turn(str(campaign.id), str(turn.id), turn.user_input, turn.narrative)
+
     await campaign.save()
 
     return FreeActionOut(
