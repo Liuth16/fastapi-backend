@@ -18,5 +18,6 @@ __pycache__/
 logs/
 *.log
 tmp/
+*.xml
 
 vectordb/

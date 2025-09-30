@@ -102,15 +102,19 @@ Combat state (always provided — ignore unless hostility occurs):
 Context:
 The context below contains TWO parts:
 1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
-2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant to the current situation).
+2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
 
 You must:
 - Always prioritize **Recent Turns** when determining continuity and what happens next.
 - Use **Relevant Past Context** ONLY if it genuinely helps maintain narrative or world consistency (ignore if irrelevant).
 
-{previous}
+{previous} 
 
-Rules for combat resolution:
+### Dialogue Handling
+1.  **Identify Dialogue vs. Action:** Your first task is to determine if the player's input is speech or a physical action. Input in quotation marks ("...") or phrased as a question/statement to an NPC is dialogue.
+2.  **Maintain Conversation Flow:** If the most recent turn involved an NPC speaking to the player, you MUST assume the player's input is a reply to that NPC unless they explicitly state a new physical action (e.g., "I walk away," "I attack the swordsman").
+3.  **Ensure NPCs Respond:** When the player speaks to an NPC, the narrative you generate *must* contain that NPC's spoken response. Do not narrate the player character performing a new, unrelated action that ends the conversation.
+4.  **Attribute All Speech:** All dialogue in your narrative must be clearly attributed to a speaker. For example: 'The swordsman scoffs, "You think it's that easy?"' or 'A nearby guard overhears you and says, "..."'. Never provide unattributed, disembodied dialogue.
 
 ### Combat handling
 1. **Combat flow order** (always follow these steps in this order):
@@ -120,7 +124,7 @@ Rules for combat resolution:
      - Example: player_total = player.roll + player.dexterity
      - Example: enemy_total = enemy.roll + enemy.strength
    - Generate the effect based on who won the roll comparison.
-- Generate the narrative in a coherent way with the result and history.  
+- Generate the narrative in a coherent way with the result and history.
      *You have creative freedom here, especially with magic attacks: failures may fizzle, be deflected, or countered by enemy magic; successes may manifest in varied and flavorful ways. And the same logic for physical attacks*
 
 2. If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
