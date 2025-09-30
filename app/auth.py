@@ -9,7 +9,7 @@ from app.config import settings
 from .models import User
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # FastAPI security dependency
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")

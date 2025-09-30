@@ -99,7 +99,15 @@ Game state:
 Combat state (always provided — ignore unless hostility occurs):
 {combat_state}
 
-Previous turns:
+Context:
+The context below contains TWO parts:
+1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
+2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant to the current situation).
+
+You must:
+- Always prioritize **Recent Turns** when determining continuity and what happens next.
+- Use **Relevant Past Context** ONLY if it genuinely helps maintain narrative or world consistency (ignore if irrelevant).
+
 {previous}
 
 Rules for combat resolution:
@@ -140,7 +148,6 @@ Rules for combat resolution:
    - Emphasize tension, speed, and consequences rather than scenery or world-building.
    - Be especially imaginative with magical outcomes: failed spells can fizzle, backfire, or be deflected by the opponent’s powers; successful spells may erupt in unique, vivid effects.
 
-
 5b. **Non-Combat Narratives**
    - Be more detailed, rich, and immersive (3–6 sentences).
    - Focus on world-building, dialogue, exploration, atmosphere, and social interactions.
@@ -166,16 +173,20 @@ _PLAYER_KO_PROMPT = """You are the narrator for a freeform RPG.
 The player has reached 0 health and has been knocked out.
 
 Context:
-- Past turns so far:
-{previous_turns}
+The context below contains TWO parts:
+1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
+2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
 
-Rules:
+Instructions:
+- Always prioritize **Recent Turns** to ensure continuity.
+- Use **Relevant Past Context** only if it clearly helps maintain narrative or world consistency.
 - Do NOT kill the player.
 - Narrate how the player survives through outside intervention (rescue, unconsciousness, someone finds them, or being spared).
-- Keep it immersive and consistent with the tone of the past turns.
+- Keep it immersive and consistent with the tone of the story so far.
 - Your narration must feel like the natural continuation of the story.
 - The backend will handle combat state and health resets, so you only need to provide narrative and suggestions.
 
+{previous_turns}
 """
 
 
@@ -184,15 +195,19 @@ _ENEMY_KO_PROMPT = """You are the narrator for a freeform RPG.
 The enemy has reached 0 health and has been defeated.
 
 Context:
-- Past turns so far:
-{previous_turns}
+The context below contains TWO parts:
+1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
+2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
 
-Rules:
-- Narrate the enemy’s fall or defeat in a vivid way.
+Instructions:
+- Always prioritize **Recent Turns** to ensure continuity.
+- Use **Relevant Past Context** only if it clearly helps maintain narrative or world consistency.
+- Narrate the enemy’s fall or defeat in a vivid and dramatic way.
 - Ensure the description matches the tone and events of the past turns.
 - Provide a meaningful "enemy_defeated_reward" (loot, XP, or both) that makes sense with the context.
 - The backend will handle combat state and health updates, so you only need to provide narrative, rewards, and suggestions.
 
+{previous_turns}
 """
 
 
@@ -203,7 +218,7 @@ Rules:
 def _format_previous(previous_turns: List[str]) -> str:
     if not previous_turns:
         return "- (no prior turns)"
-    return "\n".join(f"- {p}" for p in previous_turns[::-1])
+    return "\n".join(f"- {p}" for p in previous_turns)
 
 
 # =======================
@@ -319,6 +334,8 @@ async def generate_free_narrative(
         combat_state=json.dumps(combat_state, indent=2, ensure_ascii=False),
         previous=_format_previous(previous_turns),
     )
+
+    print(contents)
 
     try:
         resp = _client.models.generate_content(

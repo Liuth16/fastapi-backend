@@ -149,14 +149,12 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     if campaign.turns:
         turns = (
             await Turn.find({"_id": {"$in": campaign.turns}})
-            .sort([("turn_number", -1)])   # ✅ Beanie expects a list of tuples
+            .sort([("turn_number", -1)])
             .limit(5)
             .to_list()
         )
         turns = list(reversed(turns))  # keep chronological order
-        for t in turns:
-            recent_turns.append(
-                f"Player: {t.user_input} | Narrator: {t.narrative}")
+        recent_turns = turns
         last_turn = turns[-1] if turns else None
     else:
         last_turn = None
@@ -165,9 +163,12 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
     relevant_turns = await query_turns(action, str(campaign.id), k=3)
 
     # 3. Merge them
-    previous_turns = recent_turns + relevant_turns
-
-    print(previous_turns)
+    previous_turns = [
+        "### Recent Turns (most recent 5):",
+        *[f"Player: {t.user_input} | Narrative: {t.narrative}" for t in recent_turns],
+        "### Relevant Past Context (from memory):",
+        *relevant_turns,  # Unpack the list of strings directly
+    ]
 
     # --- handle combat_state being dict (DB) or model (LLM)
     if last_turn.combat_state:
@@ -195,8 +196,6 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
 
     combat_state = refresh_rolls(combat_state)
 
-    print("Combat State Sent to LLM:", combat_state)
-
     # --- Send to LLM
     llm_outcome = await generate_free_narrative(
         action=action,
@@ -205,9 +204,8 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         previous_turns=previous_turns,
     )
 
-    print("LLM Outcome:", llm_outcome.combat_state)
-
     # Helper: read fresh totals from the LLM output (fallback to rolls if missing)
+
     def _fresh_totals(cs) -> tuple[int, int]:
         if not cs:
             return (0, 0)
