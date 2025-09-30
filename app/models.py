@@ -279,7 +279,7 @@ class CharacterOut(BaseModel):
 
 
 class DeleteCharacterOut(BaseModel):
-    message: str
+    message: str = "Character deleted"
 
 
 # ---------- USER ----------
