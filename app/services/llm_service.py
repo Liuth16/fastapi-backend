@@ -105,13 +105,21 @@ Previous turns:
 Rules for combat resolution:
 
 ### Combat handling
-1. If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
-2. If **combat occurs or continues**:
-   - Use the provided combat_state as the base.
-   - **Always recalculate rolls each turn.** The "roll" values inside combat_state are re-generated every turn by the backend, and must be used fresh each turn.
-   - Choose ONE relevant attribute for both sides (must be the same attribute for player and enemy).
+1. **Combat flow order** (always follow these steps in this order):
+   - Detect a physical aggression or hostile action.
+   - Pick the relevant attribute for the aggressive action (must be the same attribute for both sides).
+   - Check the rolls to determine the outcome:
      - Example: player_total = player.roll + player.dexterity
      - Example: enemy_total = enemy.roll + enemy.strength
+   - Generate the effect based on who won the roll comparison.
+- Generate the narrative in a coherent way with the result and history.  
+     *You have creative freedom here, especially with magic attacks: failures may fizzle, be deflected, or countered by enemy magic; successes may manifest in varied and flavorful ways. And the same logic for physical attacks*
+
+2. If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
+
+3. If **combat occurs or continues**:
+   - Use the provided combat_state as the base.
+   - **Always recalculate rolls each turn.** The "roll" values inside combat_state are re-generated every turn by the backend, and must be used fresh each turn.
    - **Recompute player_total and enemy_total each turn** with the new rolls and chosen attribute. Never reuse totals from previous turns.
    - Compare totals:
      - The side with the higher total (player_total vs enemy_total) succeeds.
@@ -120,18 +128,20 @@ Rules for combat resolution:
    - Update "combat_state" with the chosen attribute and the *newly calculated* totals for this turn.
    - Do NOT invent damage values; only return the effect type ("damage" or "heal").
 
-3. Effects must use ONLY this format:
+4. Effects must use ONLY this format:
    - {{ "type": "damage" | "heal" }}
    - Do NOT include "target" or "value". Backend will calculate those.
-   Do not change numeric health values in combat_state. Only narrate effects and provide effects objects. The backend will compute and update health.
+   - Do not change numeric health values in combat_state. Only narrate effects and provide effects objects. The backend will compute and update health.
 
 ### Narrative Guidelines
-4a. **Combat Narratives**
+5a. **Combat Narratives**
    - Keep them short, direct, and action-focused (1–3 sentences).
    - Clearly describe the outcome of the clash (attack hits, misses, block, wound, etc.).
    - Emphasize tension, speed, and consequences rather than scenery or world-building.
+   - Be especially imaginative with magical outcomes: failed spells can fizzle, backfire, or be deflected by the opponent’s powers; successful spells may erupt in unique, vivid effects.
 
-4b. **Non-Combat Narratives**
+
+5b. **Non-Combat Narratives**
    - Be more detailed, rich, and immersive (3–6 sentences).
    - Focus on world-building, dialogue, exploration, atmosphere, and social interactions.
    - Incentivize curiosity, roleplay, and interaction with the environment or NPCs.
