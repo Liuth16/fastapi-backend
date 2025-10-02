@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from beanie import PydanticObjectId
 from typing import List
+from app.chromadb.insert import insert_turn
 from app.services.gameplay_service import process_player_action, process_free_action
 from app.services.llm_service import (
     generate_intro_narrative, generate_enemy_for_level, generate_free_narrative, generate_free_intro)
@@ -285,6 +286,13 @@ async def create_campaign(
             enemy_health=0,  # no enemy in free mode
         )
         await turn1.insert()
+
+        await insert_turn(
+            str(campaign.id),
+            str(turn1.id),
+            turn1.user_input,
+            turn1.narrative
+        )
 
         # In free mode, turns belong directly to campaign
         campaign.turns.append(turn1.id)
