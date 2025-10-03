@@ -9,8 +9,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
-    model_config = SettingsConfigDict(env_file=".env")  # new style in v2
+    model_config = SettingsConfigDict(env_file=".env")
 
 
-# Singleton instance
 settings = Settings()

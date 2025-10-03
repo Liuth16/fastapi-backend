@@ -12,7 +12,6 @@ async def query_turns(query_text: str, campaign_id: str, k: int = 3):
         where={"campaign_id": campaign_id}
     )
 
-    # Format result nicely
     contexts = []
     for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
         contexts.append(

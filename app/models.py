@@ -90,21 +90,14 @@ class Turn(Document):
     effects: List[Effect]
     created_at: datetime = datetime.utcnow()
 
-    # Health snapshots after this turn
     character_health: int
     enemy_health: int
 
-    # NEW: full combat state (always deserialized as CombatStateModel)
     combat_state: Optional[CombatStateModel] = None
-
-    # NEW: explicit combat flag
     active_combat: bool = False
-
-    # NEW: reward when enemy defeated
     enemy_defeated_reward: EnemyDefeatedReward = Field(
         default_factory=EnemyDefeatedReward)
 
-    # NEW: suggested actions for next turn
     suggested_actions: List[str] = Field(default_factory=list)
 
     class Settings:
@@ -136,7 +129,7 @@ class Level(Document):
     enemy_name: str
     enemy_description: str
     enemy_health: int
-    enemy_max_health: int          # NEW
+    enemy_max_health: int
     is_completed: bool = False
     turns: List[PydanticObjectId] = []
 
@@ -150,7 +143,7 @@ class LevelOut(BaseModel):
     enemy_name: str
     enemy_description: str
     enemy_health: int
-    enemy_max_health: int          # NEW
+    enemy_max_health: int
     is_completed: bool
     turns: List[TurnOut]
 
@@ -167,7 +160,7 @@ class CampaignMode(str, Enum):
 class CampaignSummary(BaseModel):
     id: PydanticObjectId
     campaign_name: str
-    mode: CampaignMode   # expose mode here too so summaries are consistent
+    mode: CampaignMode
 
     class Config:
         from_attributes = True
@@ -197,7 +190,7 @@ class CampaignOut(BaseModel):
     campaign_description: str
     is_active: bool
     current_level: int
-    mode: CampaignMode   # ✅ ensure always present
+    mode: CampaignMode
 
     class Config:
         from_attributes = True
@@ -246,8 +239,8 @@ class Character(Document):
     level: int = 1
     skill_points: int = 0
 
-    max_health: int               # NEW
-    current_health: int           # NEW
+    max_health: int
+    current_health: int
 
     current_campaign_id: Optional[PydanticObjectId] = None
     past_campaign_ids: List[PydanticObjectId] = []
@@ -270,7 +263,6 @@ class CharacterOut(BaseModel):
     max_health: int
     current_health: int
 
-    # ✅ expanded summaries now include mode
     current_campaign: Optional[CampaignSummary] = None
     past_campaigns: List[CampaignSummary] = []
 

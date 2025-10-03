@@ -11,7 +11,7 @@ from .models import User
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
-# FastAPI security dependency
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -29,10 +29,6 @@ def create_access_token(data: dict, expires_delta: int = settings.access_token_e
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
-
-# ----------------------
-# NEW CODE FOR AUTH FLOW
-# ----------------------
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """Decode JWT and return the authenticated user."""
