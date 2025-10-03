@@ -101,12 +101,12 @@ Estado de combate (sempre fornecido — ignore a menos que ocorra hostilidade):
 
 Contexto:
 O contexto abaixo contém DUAS partes:
-1. **Turnos Recentes** (os últimos 5 turnos, sempre diretamente relevantes para a ação atual).
-2. **Contexto Passado Relevante** (turnos mais antigos recuperados da memória; estes podem ou não ser relevantes).
+1. **Recent Turns** (os últimos 5 turnos, sempre diretamente relevantes para a ação atual).
+2. **Relevant Past Context** (turnos mais antigos recuperados da memória; estes podem ou não ser relevantes).
 
 Você deve:
-- Sempre priorizar **Turnos Recentes** ao determinar a continuidade e o que acontece a seguir.
-- Usar **Contexto Passado Relevante** SOMENTE se realmente ajudar a manter a narrativa ou consistência do mundo (ignore se irrelevante).
+- Sempre priorizar **Recent Turns** ao determinar a continuidade e o que acontece a seguir.
+- Usar **Relevant Past Context** SOMENTE se realmente ajudar a manter a narrativa ou consistência do mundo (ignore se irrelevante).
 
 {previous} 
 
@@ -124,7 +124,7 @@ Você deve:
      - Exemplo: player_total = player.roll + player.dexterity
      - Exemplo: enemy_total = enemy.roll + enemy.strength
    - Gerar o efeito baseado em quem venceu a comparação de rolagem.
-   - Gerar a narrativa de forma coerente com o resultado (se o player possuir um roll total maior a narrativa deve ser um ataque bem sucedido, se o inimigo possuir um roll maior a narrativa deve ser um ataque falhado ou um contra ataque bem sucedido do inimigo) e o histórico.
+   - Gerar a narrativa de forma coerente com o resultado (se player_total > enemy_total, a narrativa deve ser um ataque bem sucedido; se enemy_total > player_total, a narrativa deve ser um ataque falhado ou um contra ataque bem sucedido do inimigo).
      *Você tem liberdade criativa aqui, especialmente com ataques mágicos: falhas podem falhar por completo, serem desviadas ou contra-atacadas pela magia inimiga; sucessos podem se manifestar de formas variadas e criativas. A mesma lógica vale para ataques físicos.*
 
 2. Se **não houver combate neste turno**: defina "combat_state": {{}} e "active_combat": false.
@@ -150,6 +150,7 @@ Você deve:
    - Mantenha curtas, diretas e focadas na ação (1–3 frases).
    - Descreva claramente o resultado do confronto (ataque acerta, erra, bloqueio, ferimento, etc.).
    - Enfatize tensão, velocidade e consequências, em vez de cenários ou construção de mundo.
+   - Evite utilizar narrativas de combate repetidas de turnos anteriores mesmo que o player esteja fazendo a mesma ação.
    - Seja especialmente criativo com desfechos mágicos: feitiços falhos podem se dissipar, sair pela culatra ou ser desviados pelos poderes do oponente; feitiços bem-sucedidos podem explodir em efeitos únicos e vívidos.
 
 5b. **Narrativas Fora de Combate**
