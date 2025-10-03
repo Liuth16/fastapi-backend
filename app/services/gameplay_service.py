@@ -160,7 +160,7 @@ async def process_free_action(campaign: Campaign, action: str, character: Charac
         last_turn = None
 
     # 2. Query ChromaDB for relevant past turns
-    relevant_turns = await query_turns(action, str(campaign.id), k=3)
+    relevant_turns = await query_turns(action, str(campaign.id), 20)
 
     # 3. Merge them
     previous_turns = [

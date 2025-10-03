@@ -1,6 +1,7 @@
 import chromadb
 from chromadb.utils import embedding_functions
 from app.config import settings
+from sentence_transformers import CrossEncoder
 
 
 client = chromadb.PersistentClient(path="vectordb")
@@ -16,3 +17,5 @@ turns_collection = client.get_or_create_collection(
     name="turns",
     embedding_function=embedding_fn
 )
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
