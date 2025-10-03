@@ -89,77 +89,77 @@ Write an engaging introductory narrative (2–3 sentences).
 Output JSON with field "narrative".
 """
 
-FREE_PROMPT_TEMPLATE = """You are the game narrator for a freeform text-based RPG.
+FREE_PROMPT_TEMPLATE = """Você é o narrador do jogo para um RPG baseado em texto livre.
 
-Player action: "{action}"
+Ação do jogador: "{action}"
 
-Game state:
-- Character: {character_name}
+Estado do jogo:
+- Personagem: {character_name}
 
-Combat state (always provided — ignore unless hostility occurs):
+Estado de combate (sempre fornecido — ignore a menos que ocorra hostilidade):
 {combat_state}
 
-Context:
-The context below contains TWO parts:
-1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
-2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
+Contexto:
+O contexto abaixo contém DUAS partes:
+1. **Turnos Recentes** (os últimos 5 turnos, sempre diretamente relevantes para a ação atual).
+2. **Contexto Passado Relevante** (turnos mais antigos recuperados da memória; estes podem ou não ser relevantes).
 
-You must:
-- Always prioritize **Recent Turns** when determining continuity and what happens next.
-- Use **Relevant Past Context** ONLY if it genuinely helps maintain narrative or world consistency (ignore if irrelevant).
+Você deve:
+- Sempre priorizar **Turnos Recentes** ao determinar a continuidade e o que acontece a seguir.
+- Usar **Contexto Passado Relevante** SOMENTE se realmente ajudar a manter a narrativa ou consistência do mundo (ignore se irrelevante).
 
 {previous} 
 
-### Dialogue Handling
-1.  **Identify Dialogue vs. Action:** Your first task is to determine if the player's input is speech or a physical action. Input in quotation marks ("...") or phrased as a question/statement to an NPC is dialogue.
-2.  **Maintain Conversation Flow:** If the most recent turn involved an NPC speaking to the player, you MUST assume the player's input is a reply to that NPC unless they explicitly state a new physical action (e.g., "I walk away," "I attack the swordsman").
-3.  **Ensure NPCs Respond:** When the player speaks to an NPC, the narrative you generate *must* contain that NPC's spoken response. Do not narrate the player character performing a new, unrelated action that ends the conversation.
-4.  **Attribute All Speech:** All dialogue in your narrative must be clearly attributed to a speaker. For example: 'The swordsman scoffs, "You think it's that easy?"' or 'A nearby guard overhears you and says, "..."'. Never provide unattributed, disembodied dialogue.
+### Manipulação de Diálogo
+1.  **Identificar Diálogo vs. Ação:** Sua primeira tarefa é determinar se a entrada do jogador é fala ou uma ação física. Entradas entre aspas ("...") ou formuladas como pergunta/afirmação a um NPC são diálogos.
+2.  **Manter o Fluxo da Conversa:** Se o turno mais recente envolveu um NPC falando com o jogador, você DEVE assumir que a entrada do jogador é uma resposta a esse NPC, a menos que ele declare explicitamente uma nova ação física (ex.: "Eu vou embora", "Eu ataco o espadachim").
+3.  **Garantir que os NPCs Respondam:** Quando o jogador fala com um NPC, a narrativa que você gerar *deve* conter a resposta falada desse NPC. Não narre o personagem do jogador realizando uma nova ação não relacionada que encerre a conversa.
+4.  **Atribuir Toda a Fala:** Todo diálogo em sua narrativa deve ser claramente atribuído a um falante. Por exemplo: 'O espadachim debocha: "Você acha que é tão fácil assim?"' ou 'Um guarda próximo ouve você e diz: "..."'. Nunca forneça falas sem atribuição ou desincorporadas.
 
-### Combat handling
-1. **Combat flow order** (always follow these steps in this order):
-   - Detect a physical aggression or hostile action.
-   - Pick the relevant attribute for the aggressive action (must be the same attribute for both sides).
-   - Check the rolls to determine the outcome:
-     - Example: player_total = player.roll + player.dexterity
-     - Example: enemy_total = enemy.roll + enemy.strength
-   - Generate the effect based on who won the roll comparison.
-- Generate the narrative in a coherent way with the result and history.
-     *You have creative freedom here, especially with magic attacks: failures may fizzle, be deflected, or countered by enemy magic; successes may manifest in varied and flavorful ways. And the same logic for physical attacks*
+### Manipulação de Combate
+1. **Ordem do fluxo de combate** (sempre siga estes passos nesta ordem):
+   - Detectar uma agressão física ou ação hostil.
+   - Escolher o atributo relevante para a ação agressiva (deve ser o mesmo atributo para ambos os lados).
+   - Verificar as rolagens para determinar o resultado:
+     - Exemplo: player_total = player.roll + player.dexterity
+     - Exemplo: enemy_total = enemy.roll + enemy.strength
+   - Gerar o efeito baseado em quem venceu a comparação de rolagem.
+   - Gerar a narrativa de forma coerente com o resultado (se o player possuir um roll total maior a narrativa deve ser um ataque bem sucedido, se o inimigo possuir um roll maior a narrativa deve ser um ataque falhado ou um contra ataque bem sucedido do inimigo) e o histórico.
+     *Você tem liberdade criativa aqui, especialmente com ataques mágicos: falhas podem falhar por completo, serem desviadas ou contra-atacadas pela magia inimiga; sucessos podem se manifestar de formas variadas e criativas. A mesma lógica vale para ataques físicos.*
 
-2. If **no combat occurs this turn**: set "combat_state": {{}} and "active_combat": false.
+2. Se **não houver combate neste turno**: defina "combat_state": {{}} e "active_combat": false.
 
-3. If **combat occurs or continues**:
-   - Use the provided combat_state as the base.
-   - **Always recalculate rolls each turn.** The "roll" values inside combat_state are re-generated every turn by the backend, and must be used fresh each turn.
-   - **Recompute player_total and enemy_total each turn** with the new rolls and chosen attribute. Never reuse totals from previous turns.
-   - Compare totals:
-     - The side with the higher total (player_total vs enemy_total) succeeds.
-     - The side with the lower total suffers the consequence.
-     - Ties can be narrated as stalemates (no effect or both minor scratches).
-   - Update "combat_state" with the chosen attribute and the *newly calculated* totals for this turn.
-   - Do NOT invent damage values; only return the effect type ("damage" or "heal").
+3. Se **o combate ocorrer ou continuar**:
+   - Use o combat_state fornecido como base.
+   - **Sempre recalcule as rolagens a cada turno.** Os valores de "roll" dentro do combat_state são gerados novamente a cada turno pelo backend, e devem ser usados de forma nova a cada turno.
+   - **Recalcule player_total e enemy_total a cada turno** com as novas rolagens e o atributo escolhido. Nunca reutilize totais de turnos anteriores.
+   - Compare os totais:
+     - O lado com o maior total (player_total vs enemy_total) vence.
+     - O lado com o menor total sofre a consequência.
+     - Empates podem ser narrados como impasses (sem efeito ou ambos com pequenos arranhões).
+   - Atualize "combat_state" com o atributo escolhido e os *novos totais calculados* para este turno.
+   - NÃO invente valores de dano; apenas retorne o tipo de efeito ("damage" ou "heal").
 
-4. Effects must use ONLY this format:
+4. Efeitos devem usar SOMENTE este formato:
    - {{ "type": "damage" | "heal" }}
-   - Do NOT include "target" or "value". Backend will calculate those.
-   - Do not change numeric health values in combat_state. Only narrate effects and provide effects objects. The backend will compute and update health.
+   - NÃO inclua "target" ou "value". O backend calculará isso.
+   - Não altere valores numéricos de vida em combat_state. Apenas narre os efeitos e forneça objetos de efeito. O backend irá calcular e atualizar a vida.
 
-### Narrative Guidelines
-5a. **Combat Narratives**
-   - Keep them short, direct, and action-focused (1–3 sentences).
-   - Clearly describe the outcome of the clash (attack hits, misses, block, wound, etc.).
-   - Emphasize tension, speed, and consequences rather than scenery or world-building.
-   - Be especially imaginative with magical outcomes: failed spells can fizzle, backfire, or be deflected by the opponent’s powers; successful spells may erupt in unique, vivid effects.
+### Diretrizes de Narrativa
+5a. **Narrativas de Combate**
+   - Mantenha curtas, diretas e focadas na ação (1–3 frases).
+   - Descreva claramente o resultado do confronto (ataque acerta, erra, bloqueio, ferimento, etc.).
+   - Enfatize tensão, velocidade e consequências, em vez de cenários ou construção de mundo.
+   - Seja especialmente criativo com desfechos mágicos: feitiços falhos podem se dissipar, sair pela culatra ou ser desviados pelos poderes do oponente; feitiços bem-sucedidos podem explodir em efeitos únicos e vívidos.
 
-5b. **Non-Combat Narratives**
-   - Be more detailed, rich, and immersive (3–6 sentences).
-   - Focus on world-building, dialogue, exploration, atmosphere, and social interactions.
-   - Incentivize curiosity, roleplay, and interaction with the environment or NPCs.
-   - Encourage dialogue opportunities and new directions the player might explore.
+5b. **Narrativas Fora de Combate**
+   - Seja mais detalhado, rico e imersivo (3–6 frases).
+   - Foque em construção de mundo, diálogo, exploração, atmosfera e interações sociais.
+   - Incentive a curiosidade, interpretação e interação com o ambiente ou NPCs.
+   - Estimule oportunidades de diálogo e novos caminhos que o jogador possa explorar.
 
-### Action Suggestions
-At the end of your response, ALWAYS provide a field "suggested_actions".
+### Sugestões de Ação
+No final de sua resposta, SEMPRE forneça um campo "suggested_actions".
 """
 
 
@@ -172,52 +172,52 @@ Generate the first enemy (name, description, and health 20–50).
 Output JSON strictly matching the schema.
 """
 
-_PLAYER_KO_PROMPT = """You are the narrator for a freeform RPG.
+_PLAYER_KO_PROMPT = """Você é o narrador de um RPG livre em texto.
 
-The player has reached 0 health and has been knocked out.
+O jogador chegou a 0 de vida e foi nocauteado.
 
-Context:
-The context below contains TWO parts:
-1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
-2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
+Contexto:
+O contexto abaixo contém DUAS partes:
+1. **Turnos Recentes** (os últimos 5 turnos, sempre diretamente relevantes para a ação atual).
+2. **Contexto Passado Relevante** (turnos mais antigos recuperados da memória; estes podem ou não ser relevantes).
 
-Instructions:
-- Always prioritize **Recent Turns** to ensure continuity.
-- Use **Relevant Past Context** only if it clearly helps maintain narrative or world consistency.
-- Do NOT kill the player.
-- Narrate how the player survives through outside intervention (rescue, unconsciousness, someone finds them, or being spared).
-- Keep it immersive and consistent with the tone of the story so far.
-- Your narration must feel like the natural continuation of the story.
-- The backend will handle combat state and health resets, so you only need to provide narrative and suggestions.
-
-{previous_turns}
-"""
-
-
-_ENEMY_KO_PROMPT = """You are the narrator for a freeform RPG.
-
-The enemy has reached 0 health and has been defeated.
-
-Context:
-The context below contains TWO parts:
-1. **Recent Turns** (the last 5 turns, always directly relevant to the current action).
-2. **Relevant Past Context** (older turns retrieved from memory; these may or may not be relevant).
-
-Instructions:
-- Always prioritize **Recent Turns** to ensure continuity.
-- Use **Relevant Past Context** only if it clearly helps maintain narrative or world consistency.
-- Narrate the enemy’s fall or defeat in a vivid and dramatic way.
-- Ensure the description matches the tone and events of the past turns.
-- Provide a meaningful "enemy_defeated_reward" (loot, XP, or both) that makes sense with the context.
-- The backend will handle combat state and health updates, so you only need to provide narrative, rewards, and suggestions.
+Instruções:
+- Sempre priorize os **Turnos Recentes** para garantir a continuidade.
+- Use o **Contexto Passado Relevante** apenas se ajudar claramente a manter a narrativa ou consistência do mundo.
+- NÃO mate o jogador.
+- Narre como o jogador sobrevive por meio de intervenção externa (resgate, inconsciência, alguém o encontra ou sendo poupado).
+- Mantenha a narrativa imersiva e consistente com o tom da história até aqui.
+- Sua narração deve parecer a continuação natural da história.
+- O backend cuidará do estado de combate e do reset da vida, então você só precisa fornecer a narrativa e as sugestões.
 
 {previous_turns}
 """
 
+
+_ENEMY_KO_PROMPT = """Você é o narrador de um RPG livre em texto.
+
+O inimigo chegou a 0 de vida e foi derrotado.
+
+Contexto:
+O contexto abaixo contém DUAS partes:
+1. **Turnos Recentes** (os últimos 5 turnos, sempre diretamente relevantes para a ação atual).
+2. **Contexto Passado Relevante** (turnos mais antigos recuperados da memória; estes podem ou não ser relevantes).
+
+Instruções:
+- Sempre priorize os **Turnos Recentes** para garantir a continuidade.
+- Use o **Contexto Passado Relevante** apenas se ajudar claramente a manter a narrativa ou consistência do mundo.
+- Narre a queda ou derrota do inimigo de forma vívida e dramática, lembre-se que a vida chegou a 0 então deve ser narrado o nocaute do inimigo.
+- Certifique-se de que a descrição corresponda ao tom e aos eventos dos turnos anteriores.
+- Forneça uma recompensa significativa em "enemy_defeated_reward" (saque, XP ou ambos) que faça sentido com o contexto.
+- O backend cuidará do estado de combate e das atualizações de vida, então você só precisa fornecer a narrativa, as recompensas e as sugestões.
+
+{previous_turns}
+"""
 
 # =======================
 # HELPERS
 # =======================
+
 
 def _format_previous(previous_turns: List[str]) -> str:
     if not previous_turns:
@@ -300,16 +300,16 @@ async def generate_intro_narrative(campaign_description: str, enemy_name: str, e
 
 async def generate_free_intro(campaign_description: str, character_name: str) -> IntroInit:
     """Generates the intro narrative for free mode (Turn 1)."""
-    contents = f"""You are the narrator.
-Context:
-Campaign description: {campaign_description}
-Character: {character_name}
+    contents = f"""Você é o narrador.
+    Contexto:
+    Descrição da campanha: {campaign_description}
+    Personagem: {character_name}
 
-Write an engaging introductory narrative (2–3 sentences).
-The narrative should set the scene, introduce the character, and hint at potential adventures ahead.
-Keep the introductory narrative in the same language of the campaign description (Either English or Portuguese Brazil).
-Output JSON with field "narrative".
-"""
+    Escreva uma narrativa introdutória envolvente (2–3 frases).
+    A narrativa deve ambientar a cena, apresentar o personagem e sugerir possíveis aventuras futuras.
+    Mantenha a narrativa introdutória no mesmo idioma da descrição da campanha.
+    Retorne em JSON com o campo "narrative".
+    """
     try:
         resp = _client.models.generate_content(
             model=_MODEL,
