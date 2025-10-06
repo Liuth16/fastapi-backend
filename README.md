@@ -46,38 +46,33 @@ A API foi desenvolvida em **FastAPI** e integra autenticação, gerenciamento de
 ```
 backend/
 │
-├── app/
-│ ├── api/
-│ │ ├── auth.py # Endpoints de autenticação
-│ │ ├── characters.py # CRUD de personagens
-│ │ ├── campaigns.py # Gerenciamento de campanhas
-│ │ └── turns.py # Geração e armazenamento de turnos
-│ │
-│ ├── core/
-│ │ ├── config.py # Configurações globais (env vars, secrets, etc.)
-│ │ ├── security.py # Funções JWT e bcrypt
-│ │ ├── dependencies.py # Injeção de dependências (user, db, etc.)
-│ │ └── llm.py # Integração com Gemini API
-│ │
-│ ├── db/
-│ │ ├── setup.py # Conexão com MongoDB e ChromaDB
-│ │ └── models/
-│ │ ├── user.py # Modelo de usuário
-│ │ ├── character.py # Modelo de personagem
-│ │ ├── campaign.py # Modelo de campanha
-│ │ └── turn.py # Modelo de turno
-│ │
-│ ├── services/
-│ │ ├── combat.py # Manipulação de combates e rolagens
-│ │ ├── memory.py # Armazenamento e recuperação vetorial
-│ │ └── prompt_builder.py # Geração de prompts para IA
-│ │
-│ └── main.py # Ponto de entrada da aplicação
+├── .devcontainer/
+│   └── devcontainer.json               # Configuração do ambiente DevContainer (Python 3.12)
 │
-├── .env.example # Variáveis de ambiente de exemplo
-├── requirements.txt # Dependências do projeto
-├── Dockerfile # Configuração do container FastAPI
-└── devcontainer.json # Ambiente de desenvolvimento para VS Code
+├── app/
+│   ├── chromadb/
+│   │   ├── insert.py                   # Inserção de turnos no banco vetorial
+│   │   ├── query.py                    # Consulta e reranqueamento de turnos similares
+│   │   └── setup.py                    # Configuração do cliente ChromaDB e funções de embedding
+│   │
+│   ├── services/
+│   │   ├── gameplay_service.py         # Lógica principal de combate, ações e rolagens
+│   │   └── llm_service.py              # Integração com Gemini API e geração de narrativas
+│   │
+│   ├── utils/
+│   │   ├── cheats.py                   # Funções de trapaça (ajustes de vida, etc.)
+│   │   └── combat.py                   # Funções auxiliares de combate e rolagens
+│   │
+│   ├── auth.py                         # Autenticação JWT e verificação de usuário
+│   ├── config.py                       # Configuração de ambiente e variáveis (.env)
+│   ├── models.py                       # Modelos Pydantic e Beanie (User, Character, Campaign, Turn, etc.)
+│   └── routes.py                       # Rotas FastAPI (auth, personagem, campanha, histórico)
+│
+├── main.py                             # Ponto de entrada FastAPI (CORS, inicialização Beanie, rotas)
+├── requirements.txt                    # Dependências do projeto
+├── .gitignore                          # Ignora cache, .env, e arquivos temporários
+└── vectordb/                           # Diretório persistente do ChromaDB (armazenamento vetorial)
+
 ```
 
 
